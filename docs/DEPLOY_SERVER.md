@@ -5,9 +5,13 @@
 当前部署条件：
 
 - 服务器系统：Ubuntu
-- 访问方式：先用服务器 IP 访问
+- 访问方式：先用服务器 IP + 独立端口访问
 - 示例服务器 IP：`8.163.72.189`
 - 仓库状态：GitHub 私有仓库
+- 当前服务器已有项目：
+  - Nginx 已占用外部 `80`、`8081`
+  - 已有项目内部监听 `127.0.0.1:8080`
+  - 本项目使用内部 `127.0.0.1:5001`，外部 `8082`
 
 ## 1. 本地提交并推送代码
 
@@ -70,7 +74,7 @@ nano server/.env
 ```env
 APP_ENV=production
 DATABASE_URL=sqlite:////opt/wechat-series-monitor/server/data/collector.prod.db
-PUBLIC_BASE_URL=http://8.163.72.189
+PUBLIC_BASE_URL=http://8.163.72.189:8082
 DEVICE_OFFLINE_MINUTES=150
 
 COLLECTOR_TOKEN=换成一串强随机token
@@ -83,13 +87,13 @@ WECOM_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的企
 ```bash
 cd /opt/wechat-series-monitor
 source .venv/bin/activate
-gunicorn -w 2 -b 127.0.0.1:5000 "server.src.app:create_app()"
+gunicorn -w 2 -b 127.0.0.1:5001 "server.src.app:create_app()"
 ```
 
 然后另开一个终端测试：
 
 ```bash
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5001/health
 ```
 
 看到 `{"ok":true,...}` 后按 `Ctrl+C` 停掉 Gunicorn。
@@ -114,7 +118,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/wechat-series-monitor
 Environment=PYTHONPATH=/opt/wechat-series-monitor/server
-ExecStart=/opt/wechat-series-monitor/.venv/bin/gunicorn -w 2 -b 127.0.0.1:5000 "src.app:create_app()"
+ExecStart=/opt/wechat-series-monitor/.venv/bin/gunicorn -w 2 -b 127.0.0.1:5001 "src.app:create_app()"
 Restart=always
 RestartSec=5
 
@@ -152,15 +156,15 @@ sudo journalctl -u wechat-series-monitor -f
 sudo nano /etc/nginx/sites-available/wechat-series-monitor
 ```
 
-写入，把 `8.163.72.189` 换成你的真实服务器 IP：
+写入。当前服务器的 `80` 和 `8081` 已被已有项目使用，本项目先使用外部端口 `8082`：
 
 ```nginx
 server {
-    listen 80;
-    server_name 8.163.72.189;
+    listen 8082;
+    server_name _;
 
     location / {
-        proxy_pass http://127.0.0.1:5000;
+        proxy_pass http://127.0.0.1:5001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -181,6 +185,12 @@ sudo systemctl reload nginx
 
 ```text
 http://8.163.72.189/dashboard
+```
+
+本项目实际访问地址：
+
+```text
+http://8.163.72.189:8082/dashboard
 ```
 
 ## 9. HTTPS
@@ -205,7 +215,7 @@ https://你的域名/dashboard
 ```js
 backend: {
     enabled: true,
-    serverUrl: "http://8.163.72.189",
+    serverUrl: "http://8.163.72.189:8082",
     collectorToken: "和服务器 COLLECTOR_TOKEN 一样"
 }
 ```
@@ -227,8 +237,8 @@ sudo systemctl status wechat-series-monitor
 
 部署后逐项验证：
 
-1. `http://8.163.72.189/health` 返回 `ok: true`
-2. `http://8.163.72.189/dashboard` 可以打开登录页
+1. `http://8.163.72.189:8082/health` 返回 `ok: true`
+2. `http://8.163.72.189:8082/dashboard` 可以打开登录页
 3. 输入 `ADMIN_PASSWORD` 可以登录
 4. 企业微信通知里后台链接可以打开
 5. 手机 Auto.js 上报后，后台“最近采集”出现新轮次
