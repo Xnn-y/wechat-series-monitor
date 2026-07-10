@@ -37,10 +37,15 @@ sudo apt install -y git python3 python3-venv python3-pip nginx
 
 ```bash
 cd /opt
-sudo git clone https://你的GitHub用户名:你的GitHubToken@github.com/Xnn-y/wechat-series-monitor.git
+sudo git clone https://github.com/Xnn-y/wechat-series-monitor.git
 sudo chown -R $USER:$USER /opt/wechat-series-monitor
 cd /opt/wechat-series-monitor
 ```
+
+执行 `git clone` 时，GitHub 会要求输入账号和密码：
+
+- Username：你的 GitHub 用户名
+- Password：粘贴 GitHub Personal Access Token，不是 GitHub 登录密码
 
 注意：GitHub Token 不要发给任何人，也不要截图。长期使用建议后续改成 SSH key 拉取。
 
