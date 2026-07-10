@@ -74,6 +74,22 @@
   }
   .stat-card .label { font-size: .8rem; color: var(--text-secondary); margin-bottom: 4px; }
   .stat-card .value { font-size: 1.6rem; font-weight: 700; }
+  .stat-card .hint { font-size: .78rem; color: var(--text-secondary); margin-top: 4px; }
+  .stat-card.clickable { cursor: pointer; }
+  .stat-card.clickable:hover { border-color: var(--primary); background: var(--primary-light); }
+
+  .overview-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+  .overview-panel {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 16px 20px;
+  }
+  .overview-panel h3 { font-size: .95rem; margin-bottom: 10px; }
+  .mini-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+  .mini-table th, .mini-table td { padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  .mini-table th { font-size: .75rem; color: var(--text-secondary); background: transparent; border-bottom: 1px solid var(--border); text-transform: none; letter-spacing: 0; }
+  .status-pill { display:inline-flex; align-items:center; gap:5px; padding:2px 7px; border-radius:999px; font-size:.76rem; font-weight:600; }
+  .status-pill.online { background:#ecfdf5; color:var(--success); }
+  .status-pill.offline { background:#fef2f2; color:var(--danger); }
 
   /* 筛选栏 */
   .filters {
@@ -108,7 +124,18 @@
   td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: var(--primary-light); }
+  tr.highlight-run td { background: #fff7ed; border-bottom-color: #fed7aa; }
+  tr.highlight-run:hover td { background: #ffedd5; }
   .account-tag { display: inline-block; padding: 2px 8px; background: #f0fdf4; color: var(--success); border-radius: 4px; font-size: .8rem; font-weight: 600; }
+  .table-note {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: #fff7ed; color: #9a3412; font-size: .84rem;
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+  }
+  .table-note button {
+    border: 1px solid #fdba74; background:#fff; color:#9a3412;
+    border-radius: 6px; padding: 4px 9px; cursor:pointer; font-size:.78rem;
+  }
 
   /* 分页 */
   .pagination {
@@ -132,6 +159,7 @@
     .filters { flex-direction: column; }
     .filter-group input { min-width: 100%; }
     .stats { grid-template-columns: 1fr 1fr; }
+    .overview-grid { grid-template-columns: 1fr; }
     th, td { padding: 8px 10px; font-size: .8rem; }
   }
 </style>
@@ -165,6 +193,7 @@
   <div class="container">
     <!-- 统计 -->
     <div class="stats" id="statsRow"></div>
+    <div class="overview-grid" id="overviewGrid"></div>
 
     <!-- 筛选 -->
     <div class="filters">
@@ -227,7 +256,9 @@ const ADMIN_HEADER = "X-Admin-Password";
 
 let currentPage = 1;
 let currentFilters = {};
-const PAGE_SIZE = 50;
+let currentHighlightRunId = "";
+let latestRunId = "";
+const PAGE_SIZE = 20;
 
 // ===== 登录 =====
 function doLogin() {
@@ -272,6 +303,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
 // ===== 初始化 =====
 function init() {
+  setDefaultDateFilters();
   loadStats();
   search();
 }
@@ -289,18 +321,16 @@ function logout() {
 
 // ===== 统计 =====
 function loadStats() {
-  fetch(API_BASE + "/api/records?limit=1", { headers: getHeaders() })
-    .then(r => r.json())
-    .then(d => updateStats(d.total));
-
-  fetch(API_BASE + "/api/runs?limit=1", { headers: getHeaders() })
+  fetch(API_BASE + "/api/summary", { headers: getHeaders() })
     .then(r => r.json())
     .then(d => {
-      if (d.runs && d.runs.length > 0) {
-        var run = d.runs[0];
-        document.getElementById("statusDot").className = "dot online";
+      if (!d.ok) return;
+      renderSummary(d);
+      if (d.latest_run) {
+        var hasOnline = d.online_devices > 0;
+        document.getElementById("statusDot").className = "dot " + (hasOnline ? "online" : "offline");
         document.getElementById("statusText").textContent =
-          "设备 " + run.device_name + " | 最近采集 " + formatTime(run.finished_at);
+          "最近采集：" + d.latest_run.device_name + " | " + formatTime(d.latest_run.finished_at);
       } else {
         document.getElementById("statusDot").className = "dot offline";
         document.getElementById("statusText").textContent = "暂无采集记录";
@@ -310,10 +340,6 @@ function loadStats() {
       document.getElementById("statusDot").className = "dot offline";
       document.getElementById("statusText").textContent = "后端连接失败";
     });
-
-  fetch(API_BASE + "/health")
-    .then(r => r.json())
-    .then(d => updateStats(null, d.record_count));
 }
 
 // ===== 查询 =====
@@ -329,10 +355,11 @@ function search(page) {
   if (series) params.set("series", series);
   if (dateFrom) params.set("date_from", dateFrom);
   if (dateTo) params.set("date_to", dateTo);
+  if (currentHighlightRunId) params.set("run_id", currentHighlightRunId);
   params.set("limit", PAGE_SIZE);
   params.set("offset", (currentPage - 1) * PAGE_SIZE);
 
-  currentFilters = { account, series, dateFrom, dateTo };
+  currentFilters = { account, series, dateFrom, dateTo, runId: currentHighlightRunId };
 
   fetch(API_BASE + "/api/records?" + params.toString(), { headers: getHeaders() })
     .then(r => r.json())
@@ -345,7 +372,6 @@ function search(page) {
 function renderTable(data) {
   var total = data.total;
   var records = data.records;
-  updateStats(total);
 
   if (!records || records.length === 0) {
     document.getElementById("tableWrap").innerHTML = '<p class="empty">📭 没有匹配的记录</p>';
@@ -358,7 +384,8 @@ function renderTable(data) {
 
   var startIdx = (currentPage - 1) * PAGE_SIZE + 1;
   records.forEach(function(r, i) {
-    html += '<tr>' +
+    var rowClass = currentHighlightRunId && r.run_id === currentHighlightRunId ? ' class="highlight-run"' : '';
+    html += '<tr' + rowClass + '>' +
       '<td>' + (startIdx + i) + '</td>' +
       '<td><span class="account-tag">' + esc(r.account_name_raw) + '</span></td>' +
       '<td>' + esc(r.series_name_raw) + '</td>' +
@@ -382,6 +409,10 @@ function renderTable(data) {
     html += '</div>';
   }
 
+  if (currentHighlightRunId) {
+    html = '<div class="table-note"><span>当前只看最近一轮采集，相关记录已高亮</span><button onclick="clearRunHighlight()">恢复今日视图</button></div>' + html;
+  }
+
   document.getElementById("tableWrap").innerHTML = html;
 }
 
@@ -392,6 +423,7 @@ function exportCsv() {
   if (currentFilters.series) params.set("series", currentFilters.series);
   if (currentFilters.dateFrom) params.set("date_from", currentFilters.dateFrom);
   if (currentFilters.dateTo) params.set("date_to", currentFilters.dateTo);
+  if (currentFilters.runId) params.set("run_id", currentFilters.runId);
 
   var url = API_BASE + "/api/export.csv";
   if (params.toString()) url += "?" + params.toString();
@@ -410,10 +442,25 @@ function exportCsv() {
 function resetFilters() {
   document.getElementById("filterAccount").value = "";
   document.getElementById("filterSeries").value = "";
-  document.getElementById("filterDateFrom").value = "";
-  document.getElementById("filterDateTo").value = "";
+  setDefaultDateFilters();
+  currentHighlightRunId = "";
   currentFilters = {};
   search(1);
+}
+
+function setDefaultDateFilters() {
+  var today = new Date();
+  var tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  document.getElementById("filterDateFrom").value = formatDateInput(today);
+  document.getElementById("filterDateTo").value = formatDateInput(tomorrow);
+}
+
+function formatDateInput(d) {
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, "0");
+  var day = String(d.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + day;
 }
 
 function formatTime(t) {
@@ -464,21 +511,89 @@ function loadAliases() {
     });
 }
 
-// 在 stats 行增加 OCR 管理按钮
-function updateStats(total, dbCount) {
-  var tc = total !== null ? total : (dbCount || 0);
+function renderSummary(data) {
+  var latest = data.latest_run || {};
+  latestRunId = latest.run_id || "";
+  var latestCardClass = latest.run_id ? "stat-card clickable" : "stat-card";
+  var latestClick = latest.run_id ? ' onclick="highlightLatestRun()"' : "";
+  var deviceText = data.device_count > 0
+    ? data.online_devices + "/" + data.device_count + " 在线"
+    : "暂无设备";
   var html =
-    '<div class="stat-card"><div class="label">总记录数</div><div class="value">' + tc + '</div></div>' +
-    '<div class="stat-card"><div class="label">当前页</div><div class="value">' + currentPage + '</div></div>' +
-    '<div class="stat-card"><div class="label">每页显示</div><div class="value">' + PAGE_SIZE + '</div></div>' +
-    '<div class="stat-card"><div class="label">OCR别名</div><div class="value" style="font-size:.9rem;cursor:pointer;color:var(--primary)" onclick="toggleAliasPanel()">🔧 管理</div></div>';
+    '<div class="stat-card"><div class="label">今日新增</div><div class="value">' + data.today_records + '</div><div class="hint">默认筛选今天到明天</div></div>' +
+    '<div class="stat-card"><div class="label">总记录数</div><div class="value">' + data.total_records + '</div><div class="hint">已去重入库</div></div>' +
+    '<div class="' + latestCardClass + '"' + latestClick + '><div class="label">最近一轮新增</div><div class="value">' + (latest.inserted || 0) + '</div><div class="hint">' + esc(latest.device_name || "暂无采集") + ' · 点击高亮</div></div>' +
+    '<div class="stat-card clickable" onclick="toggleAliasPanel()"><div class="label">设备状态</div><div class="value" style="font-size:1.15rem;">' + deviceText + '</div><div class="hint">点击下方管理 OCR 别名</div></div>';
   document.getElementById("statsRow").innerHTML = html;
+
+  document.getElementById("overviewGrid").innerHTML =
+    renderDevicePanel(data.devices || []) +
+    renderRunsPanel(data.recent_runs || [], data.today_by_account || []);
+}
+
+function highlightLatestRun() {
+  if (!latestRunId) return;
+  currentHighlightRunId = latestRunId;
+  search(1);
+  document.getElementById("tableWrap").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function clearRunHighlight() {
+  currentHighlightRunId = "";
+  setDefaultDateFilters();
+  search(1);
+}
+
+function renderDevicePanel(devices) {
+  if (!devices.length) {
+    return '<div class="overview-panel"><h3>设备状态</h3><p class="empty" style="padding:20px 0;">暂无设备心跳或采集记录</p></div>';
+  }
+  var html = '<div class="overview-panel"><h3>设备状态</h3><table class="mini-table"><thead><tr><th>设备</th><th>状态</th><th>最后在线</th></tr></thead><tbody>';
+  devices.forEach(function(d) {
+    html += '<tr><td>' + esc(d.name) + '</td><td>' +
+      '<span class="status-pill ' + (d.online ? "online" : "offline") + '">' + (d.online ? "在线" : "离线") + '</span>' +
+      '</td><td>' + formatTime(d.last_seen) + '<br><span style="color:var(--text-secondary);font-size:.76rem;">' + formatMinutesAgo(d.minutes_ago) + '</span></td></tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function renderRunsPanel(runs, accounts) {
+  var html = '<div class="overview-panel"><h3>最近采集</h3>';
+  if (!runs.length) {
+    html += '<p class="empty" style="padding:20px 0;">暂无采集轮次</p>';
+  } else {
+    html += '<table class="mini-table"><thead><tr><th>时间</th><th>设备</th><th>新增/重复</th></tr></thead><tbody>';
+    runs.forEach(function(r) {
+      html += '<tr><td>' + formatTime(r.finished_at) + '</td><td>' + esc(r.device_name) + '</td><td>' + r.inserted + ' / ' + r.duplicates + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  if (accounts.length) {
+    html += '<h3 style="margin-top:14px;">今日账号新增</h3><table class="mini-table"><tbody>';
+    accounts.forEach(function(a) {
+      html += '<tr><td>' + esc(a.account) + '</td><td style="text-align:right;">' + a.count + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function formatMinutesAgo(minutes) {
+  if (minutes === null || minutes === undefined) return "-";
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return minutes + " 分钟前";
+  var hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + " 小时前";
+  return Math.floor(hours / 24) + " 天前";
 }
 
 function esc(s) {
   if (!s) return "-";
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
+
 </script>
 </body>
 </html>

@@ -15,6 +15,7 @@ import os
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite:///server/data/collector.test.db"
 os.environ["ADMIN_PASSWORD"] = "admin123"
+os.environ["WECOM_WEBHOOK_URL"] = "change_me"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -160,6 +161,13 @@ def test_get_records():
     assert data2["total"] >= 1
     print(f"  [PASS] GET /api/records?account=萌萌虎 -> total={data2['total']}")
 
+    resp3 = client.get("/api/records?run_id=20260709_test_001", headers=ADMIN_HEADERS)
+    data3 = resp3.get_json()
+    assert data3["ok"] is True
+    assert data3["total"] == 2
+    assert all(r["run_id"] == "20260709_test_001" for r in data3["records"])
+    print(f"  [PASS] GET /api/records?run_id=20260709_test_001 -> total={data3['total']}")
+
 
 def test_get_runs():
     """7. 查询采集轮次"""
@@ -172,6 +180,26 @@ def test_get_runs():
     assert data["ok"] is True
     assert len(data["runs"]) >= 2
     print(f"  [PASS] GET /api/runs -> {len(data['runs'])} runs")
+
+
+def test_get_summary():
+    """8. 团队后台总览"""
+    app = create_app()
+    client = app.test_client()
+
+    blocked = client.get("/api/summary")
+    assert blocked.status_code == 401
+
+    resp = client.get("/api/summary", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "total_records" in data
+    assert "today_records" in data
+    assert "devices" in data
+    assert "recent_runs" in data
+    assert data["device_count"] >= 1
+    print(f"  [PASS] GET /api/summary -> devices={data['device_count']} total={data['total_records']}")
 
 
 def test_export_csv():
@@ -196,5 +224,6 @@ if __name__ == "__main__":
     test_normalization_dedup()
     test_get_records()
     test_get_runs()
+    test_get_summary()
     test_export_csv()
-    print("\n===== 全部 8 项测试通过 ✅ =====")
+    print("\n===== 全部 9 项测试通过 ✅ =====")

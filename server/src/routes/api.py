@@ -93,6 +93,7 @@ def collect():
 @api.route("/api/records", methods=["GET"])
 @require_admin
 def get_records():
+    run_id = request.args.get("run_id", "").strip()
     account = request.args.get("account", "").strip()
     series = request.args.get("series", "").strip()
     date_from = request.args.get("date_from", "").strip()
@@ -111,6 +112,9 @@ def get_records():
         where_clauses = []
         params = []
 
+        if run_id:
+            where_clauses.append("run_id = ?")
+            params.append(run_id)
         if account:
             where_clauses.append("account_name_normalized LIKE ?")
             params.append(f"%{account}%")
@@ -175,6 +179,89 @@ def get_runs():
         conn.close()
 
     return jsonify({"ok": True, "runs": runs})
+
+
+# ============================================================
+# GET /api/summary - 团队后台总览
+# ============================================================
+@api.route("/api/summary", methods=["GET"])
+@require_admin
+def get_summary():
+    conn = get_connection()
+    try:
+        total_records = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM series_records"
+        ).fetchone()["cnt"]
+
+        today_records = conn.execute(
+            """SELECT COUNT(*) AS cnt FROM series_records
+               WHERE collected_at >= date('now', 'localtime')
+                 AND collected_at < date('now', 'localtime', '+1 day')"""
+        ).fetchone()["cnt"]
+
+        latest_run_row = conn.execute(
+            """SELECT run_id, device_name, started_at, finished_at,
+                      received, inserted, duplicates, created_at
+               FROM collection_runs
+               ORDER BY created_at DESC
+               LIMIT 1"""
+        ).fetchone()
+
+        recent_run_rows = conn.execute(
+            """SELECT run_id, device_name, started_at, finished_at,
+                      received, inserted, duplicates, created_at
+               FROM collection_runs
+               ORDER BY created_at DESC
+               LIMIT 5"""
+        ).fetchall()
+
+        device_rows = conn.execute(
+            """SELECT name, first_seen, last_seen,
+                      CAST((julianday('now') - julianday(last_seen)) * 24 * 60 AS INTEGER) AS minutes_ago
+               FROM devices
+               ORDER BY last_seen DESC"""
+        ).fetchall()
+
+        account_rows = conn.execute(
+            """SELECT account_name_raw AS account, COUNT(*) AS count
+               FROM series_records
+               WHERE collected_at >= date('now', 'localtime')
+                 AND collected_at < date('now', 'localtime', '+1 day')
+               GROUP BY account_name_raw
+               ORDER BY count DESC, account_name_raw ASC
+               LIMIT 8"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    devices = []
+    online_devices = 0
+    for row in device_rows:
+        minutes_ago = row["minutes_ago"] if row["minutes_ago"] is not None else 999999
+        online = minutes_ago <= settings.DEVICE_OFFLINE_MINUTES
+        if online:
+            online_devices += 1
+        devices.append({
+            "name": row["name"],
+            "first_seen": row["first_seen"],
+            "last_seen": row["last_seen"],
+            "minutes_ago": minutes_ago,
+            "online": online,
+        })
+
+    latest_run = dict(latest_run_row) if latest_run_row else None
+
+    return jsonify({
+        "ok": True,
+        "total_records": total_records,
+        "today_records": today_records,
+        "latest_run": latest_run,
+        "recent_runs": [dict(r) for r in recent_run_rows],
+        "devices": devices,
+        "online_devices": online_devices,
+        "device_count": len(devices),
+        "today_by_account": [dict(r) for r in account_rows],
+    })
 
 
 # ============================================================

@@ -1,10 +1,11 @@
 """server/src/services/monitor.py - 心跳监控 + 异常检测"""
 from src.db import get_connection
+from src.config.settings import settings
 from src.services.notifier import send_alert_notification
 
 
 # 心跳超时阈值（分钟）
-HEARTBEAT_TIMEOUT_MINUTES = 15
+HEARTBEAT_TIMEOUT_MINUTES = settings.DEVICE_OFFLINE_MINUTES
 
 # 连续零新增轮次报警阈值
 CONSECUTIVE_ZERO_INSERT_THRESHOLD = 3
