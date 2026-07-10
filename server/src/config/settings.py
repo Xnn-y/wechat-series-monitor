@@ -12,6 +12,7 @@ class Settings:
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
     APP_ENV: str = os.getenv("APP_ENV", "local")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///server/data/collector.dev.db")
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "")
 
 
 settings = Settings()

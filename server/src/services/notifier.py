@@ -29,6 +29,9 @@ def send_new_records_notification(run_id: str, device: str, finished_at: str,
     )
     if record_lines:
         markdown_content += "\n" + "\n".join(record_lines)
+    dashboard_url = build_dashboard_url()
+    if dashboard_url:
+        markdown_content += f"\n\n[查看后台]({dashboard_url})"
 
     payload = {
         "msgtype": "markdown",
@@ -66,6 +69,10 @@ def send_alert_notification(alerts: list[dict]) -> bool:
         icon = {"heartbeat_timeout": "💔", "zero_insert": "📭"}.get(a["type"], "⚠️")
         lines.append(f"{icon} {a['message']}")
 
+    dashboard_url = build_dashboard_url()
+    if dashboard_url:
+        lines.extend(["", f"[查看后台]({dashboard_url})"])
+
     markdown_content = "\n".join(lines)
     payload = {"msgtype": "markdown", "markdown": {"content": markdown_content}}
 
@@ -78,3 +85,11 @@ def send_alert_notification(alerts: list[dict]) -> bool:
     except requests.RequestException as e:
         print(f"[NOTIFIER] 告警请求异常: {e}")
         return False
+
+
+def build_dashboard_url() -> str:
+    """Return the public dashboard URL configured for notification links."""
+    base_url = (settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if not base_url or "change_me" in base_url:
+        return ""
+    return base_url + "/dashboard"

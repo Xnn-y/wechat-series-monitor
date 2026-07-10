@@ -3,6 +3,7 @@ import sys, os
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite:///server/data/collector.test.db"
+os.environ["ADMIN_PASSWORD"] = "admin123"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

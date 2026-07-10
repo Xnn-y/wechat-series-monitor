@@ -53,10 +53,16 @@
     position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow);
   }
   .header h1 { font-size: 1.2rem; font-weight: 700; }
+  .header-actions { display:flex; align-items:center; gap:14px; }
   .header .status { font-size: .85rem; color: var(--text-secondary); }
   .header .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .dot.online { background: var(--success); }
   .dot.offline { background: var(--danger); }
+  .btn-logout {
+    padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card-bg); color: var(--text-secondary); cursor:pointer; font-size:.8rem;
+  }
+  .btn-logout:hover { color: var(--danger); border-color: var(--danger); }
 
   .container { max-width: 1200px; margin: 0 auto; padding: 20px 24px; }
 
@@ -147,10 +153,13 @@
 
   <div class="header">
     <h1>📺 剧集采集监控后台</h1>
-    <span class="status" id="statusBar">
-      <span class="dot online" id="statusDot"></span>
-      <span id="statusText">加载中...</span>
-    </span>
+    <div class="header-actions">
+      <span class="status" id="statusBar">
+        <span class="dot online" id="statusDot"></span>
+        <span id="statusText">加载中...</span>
+      </span>
+      <button class="btn-logout" onclick="logout()">退出</button>
+    </div>
   </div>
 
   <div class="container">
@@ -214,6 +223,7 @@
 
 <script>
 const API_BASE = "";
+const ADMIN_HEADER = "X-Admin-Password";
 
 let currentPage = 1;
 let currentFilters = {};
@@ -223,13 +233,14 @@ const PAGE_SIZE = 50;
 function doLogin() {
   var pwd = document.getElementById("passwordInput").value;
   fetch(API_BASE + "/api/records?limit=1", {
-    headers: { "X-Admin-Password": pwd }
+    headers: { [ADMIN_HEADER]: pwd }
   }).then(function(r) {
     if (r.status === 401) {
       document.getElementById("loginError").style.display = "block";
       return;
     }
     sessionStorage.setItem("admin_pwd", pwd);
+    document.getElementById("passwordInput").value = "";
     document.getElementById("loginOverlay").style.display = "none";
     document.getElementById("mainApp").style.display = "block";
     init();
@@ -240,7 +251,7 @@ var savedPwd = sessionStorage.getItem("admin_pwd");
 if (savedPwd) {
   // 验证已保存密码
   fetch(API_BASE + "/api/records?limit=1", {
-    headers: { "X-Admin-Password": savedPwd }
+    headers: { [ADMIN_HEADER]: savedPwd }
   }).then(function(r) {
     if (r.ok) {
       document.getElementById("loginOverlay").style.display = "none";
@@ -266,7 +277,14 @@ function init() {
 }
 
 function getHeaders() {
-  return { "X-Admin-Password": savedPwd || "" };
+  return { [ADMIN_HEADER]: sessionStorage.getItem("admin_pwd") || "" };
+}
+
+function logout() {
+  sessionStorage.removeItem("admin_pwd");
+  document.getElementById("mainApp").style.display = "none";
+  document.getElementById("loginOverlay").style.display = "flex";
+  document.getElementById("passwordInput").focus();
 }
 
 // ===== 统计 =====
@@ -293,7 +311,7 @@ function loadStats() {
       document.getElementById("statusText").textContent = "后端连接失败";
     });
 
-  fetch(API_BASE + "/health", { headers: getHeaders() })
+  fetch(API_BASE + "/health")
     .then(r => r.json())
     .then(d => updateStats(null, d.record_count));
 }

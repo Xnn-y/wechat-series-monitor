@@ -27,11 +27,11 @@ def require_token(f):
 
 
 def require_admin(f):
-    """可选的管理员密码校验：配置了 ADMIN_PASSWORD 且请求头不带 X-Admin-Password 则拒绝"""
+    """管理员密码校验：配置了 ADMIN_PASSWORD 时必须携带 X-Admin-Password。"""
     @wraps(f)
     def wrapper(*args, **kwargs):
-        admin_pwd = settings.ADMIN_PASSWORD
-        if admin_pwd and admin_pwd != "admin123":
+        admin_pwd = (settings.ADMIN_PASSWORD or "").strip()
+        if admin_pwd:
             req_pwd = request.headers.get("X-Admin-Password", "")
             if req_pwd != admin_pwd:
                 return jsonify({"ok": False, "error": "admin password required"}), 401
@@ -50,7 +50,10 @@ def health():
         count = row["cnt"]
     finally:
         conn.close()
-    return jsonify({"ok": True, "db": str(DB_PATH), "record_count": count})
+    result = {"ok": True, "record_count": count}
+    if settings.APP_ENV != "production":
+        result["db"] = str(DB_PATH)
+    return jsonify(result)
 
 
 # ============================================================
@@ -88,6 +91,7 @@ def collect():
 # 支持参数: account, series, date_from, date_to, limit, offset
 # ============================================================
 @api.route("/api/records", methods=["GET"])
+@require_admin
 def get_records():
     account = request.args.get("account", "").strip()
     series = request.args.get("series", "").strip()
@@ -149,6 +153,7 @@ def get_records():
 # GET /api/runs - 查询采集轮次
 # ============================================================
 @api.route("/api/runs", methods=["GET"])
+@require_admin
 def get_runs():
     try:
         limit = min(int(request.args.get("limit", "20")), 100)
@@ -176,6 +181,7 @@ def get_runs():
 # GET /api/export.csv - CSV 导出（支持筛选）
 # ============================================================
 @api.route("/api/export.csv", methods=["GET"])
+@require_admin
 def export_csv():
     account = request.args.get("account", "").strip()
     series = request.args.get("series", "").strip()
@@ -247,6 +253,7 @@ def heartbeat():
 # GET /api/health-check - 运行健康检查，返回告警列表
 # ============================================================
 @api.route("/api/health-check", methods=["GET"])
+@require_admin
 def health_check():
     result = run_health_check()
     return jsonify(result)
@@ -256,6 +263,7 @@ def health_check():
 # GET /api/ocr-aliases - 查询 OCR 别名列表
 # ============================================================
 @api.route("/api/ocr-aliases", methods=["GET"])
+@require_admin
 def get_ocr_aliases():
     conn = get_connection()
     try:
@@ -273,6 +281,7 @@ def get_ocr_aliases():
 # POST /api/ocr-aliases - 创建 OCR 别名修正
 # ============================================================
 @api.route("/api/ocr-aliases", methods=["POST"])
+@require_admin
 def create_ocr_alias():
     payload = request.get_json(silent=True) or {}
     raw_text = (payload.get("raw_text") or "").strip()
@@ -302,6 +311,7 @@ def create_ocr_alias():
 # DELETE /api/ocr-aliases/<int:alias_id> - 删除 OCR 别名
 # ============================================================
 @api.route("/api/ocr-aliases/<int:alias_id>", methods=["DELETE"])
+@require_admin
 def delete_ocr_alias(alias_id):
     conn = get_connection()
     try:

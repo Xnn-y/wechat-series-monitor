@@ -4,6 +4,7 @@ import os
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite:///server/data/collector.test.db"
+os.environ["ADMIN_PASSWORD"] = "admin123"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -16,6 +17,7 @@ if os.path.exists(DB_PATH):
 
 app = create_app()
 client = app.test_client()
+admin_headers = {"X-Admin-Password": "admin123"}
 
 # 模拟 AutoJs6 reporter 上报格式
 payload = {
@@ -59,7 +61,7 @@ print(f"inserted: {data2['inserted']} (应为 1)")
 print(f"duplicates: {data2['duplicates']} (应为 1)")
 
 # 查询总记录数
-resp3 = client.get("/api/records")
+resp3 = client.get("/api/records", headers=admin_headers)
 total = resp3.get_json()["total"]
 print()
 print(f"=== 数据库总记录: {total} (应为 4) ===")

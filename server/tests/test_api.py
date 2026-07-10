@@ -14,12 +14,15 @@ import os
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite:///server/data/collector.test.db"
+os.environ["ADMIN_PASSWORD"] = "admin123"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.app import create_app
 from src.db import init_db, get_connection, DB_PATH
 import os as _os
+
+ADMIN_HEADERS = {"X-Admin-Password": "admin123"}
 
 
 def setup_module():
@@ -140,7 +143,10 @@ def test_get_records():
     app = create_app()
     client = app.test_client()
 
-    resp = client.get("/api/records")
+    blocked = client.get("/api/records")
+    assert blocked.status_code == 401
+
+    resp = client.get("/api/records", headers=ADMIN_HEADERS)
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["ok"] is True
@@ -148,7 +154,7 @@ def test_get_records():
     print(f"  [PASS] GET /api/records -> total={data['total']}")
 
     # 筛选测试
-    resp2 = client.get("/api/records?account=萌萌虎")
+    resp2 = client.get("/api/records?account=萌萌虎", headers=ADMIN_HEADERS)
     data2 = resp2.get_json()
     assert data2["ok"] is True
     assert data2["total"] >= 1
@@ -160,7 +166,7 @@ def test_get_runs():
     app = create_app()
     client = app.test_client()
 
-    resp = client.get("/api/runs")
+    resp = client.get("/api/runs", headers=ADMIN_HEADERS)
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["ok"] is True
@@ -173,7 +179,7 @@ def test_export_csv():
     app = create_app()
     client = app.test_client()
 
-    resp = client.get("/api/export.csv")
+    resp = client.get("/api/export.csv", headers=ADMIN_HEADERS)
     assert resp.status_code == 200
     csv_text = resp.data.decode("utf-8-sig")
     assert "账号" in csv_text
