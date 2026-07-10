@@ -1,0 +1,19 @@
+{
+    "name": "剧集采集",
+    "main": "src/phase3_full_collect.js",
+    "ignore": [
+        "server",
+        "archive",
+        "node_modules",
+        ".git",
+        "_snapshots",
+        ".venv",
+        "logs",
+        "*.py",
+        "*.bat",
+        "*.md"
+    ],
+    "packageName": "com.example.series_collect",
+    "versionName": "1.0.0",
+    "versionCode": 1
+}

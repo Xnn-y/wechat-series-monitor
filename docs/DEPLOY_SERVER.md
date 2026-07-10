@@ -222,15 +222,78 @@ backend: {
 
 ## 11. 更新后端代码
 
-以后修 bug 后，本地提交推送，然后服务器执行：
+日常修改后端的工作流程，分三步：
+
+### 11.1 本地修改 + 推送
+
+在 VS Code 里改完代码后：
+
+```powershell
+cd f:\Py_project\Test\20260702
+
+# 查看改了哪些文件
+git status
+
+# 添加所有改动
+git add -A
+
+# 提交（用 Conventional Commits 规范）
+git commit -m "fix(server): 修复xxx问题"
+
+# 推送到 GitHub
+git push
+```
+
+常用 commit 前缀：
+
+| 前缀 | 用途 |
+|---|---|
+| `fix:` | 修 bug |
+| `feat:` | 新功能 |
+| `chore:` | 杂项（配置、文档等） |
+| `refactor:` | 重构，不改功能 |
+
+### 11.2 服务器拉取
 
 ```bash
 cd /opt/wechat-series-monitor
 git pull
+
+# 如果加了新的 Python 依赖才需要执行
 source .venv/bin/activate
 pip install -r server/requirements.txt
+deactivate
+```
+
+### 11.3 重启服务
+
+```bash
 sudo systemctl restart wechat-series-monitor
 sudo systemctl status wechat-series-monitor
+```
+
+看到 `active (running)` 即更新成功。
+
+### 11.4 特殊情况
+
+**新增了环境变量**（改了 `settings.py`）：
+服务器上也要同步更新 `.env`：
+```bash
+nano /opt/wechat-series-monitor/server/.env
+# 添加新的变量，保存后重启
+sudo systemctl restart wechat-series-monitor
+```
+
+**数据库结构变了**（改了 `database.py`）：
+新表会在服务重启时自动创建，无需手动迁移。
+
+**出问题了要回滚**：
+```bash
+cd /opt/wechat-series-monitor
+git log --oneline -5              # 看最近 5 次提交
+git revert <commit-hash>          # 回滚某次提交
+git push
+# 然后服务器再 git pull + restart
 ```
 
 ## 12. 验证清单

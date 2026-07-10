@@ -15,8 +15,11 @@ def send_new_records_notification(run_id: str, device: str, finished_at: str,
     max_show = 10  # 最多展示前10条
     record_lines = []
     for i, rec in enumerate(inserted_records[:max_show]):
-        record_lines.append(f"{i + 1}. {rec['account']}")
-        record_lines.append(f"   {rec['series']} {rec.get('episodes', '')}")
+        episodes = rec.get('episodes', '')
+        line = f"{i + 1}. {rec['account']} / {rec['series']}"
+        if episodes:
+            line += f" {episodes}"
+        record_lines.append(line)
 
     if inserted_count > max_show:
         record_lines.append(f"... 等共 {inserted_count} 条新增")

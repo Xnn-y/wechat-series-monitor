@@ -75,8 +75,8 @@
             indexFile: joinPath(dataDir, "series_index.json"),
             backend: {
                 enabled: true,
-                serverUrl: "http://192.168.65.182:5000",
-                collectorToken: "dev_token"
+                serverUrl: "http://8.163.72.189:8082",
+                collectorToken: "wm_20260710_server_x9Kp72Qz"
             }
         };
         
