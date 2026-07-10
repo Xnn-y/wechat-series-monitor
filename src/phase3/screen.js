@@ -16,23 +16,43 @@ function safeCapture() {
 }
 
 function ensureCapture() {
-    var img = safeCapture();
+    var tries = config.captureRetryTries || 8;
+    var interval = config.captureRetryInterval || 650;
+    var img = retryCapture(tries, interval);
     if (img) return img;
 
-    console.log("  首帧失败，重新申请权限...");
-    try { images.stopScreenCapture(); } catch (e) {}
-    sleep(500);
-    if (!requestScreenCapture()) {
-        console.log("[错误] 截图权限失败");
-        exit();
+    if (config.captureRecoverEnabled) {
+        img = recoverCaptureSession(tries, interval);
+        if (img) return img;
     }
-    sleep(1500);
-    img = safeCapture();
+
     if (!img) {
-        console.log("[错误] 截图仍然失败，请重启 AutoJs6");
-        exit();
+        console.log("[错误] 截图连续失败，请手动检查投屏/截图权限后重跑脚本");
+        return null;
     }
     return img;
+}
+
+function recoverCaptureSession(tries, interval) {
+    var maxRecover = config.captureRecoverMaxTries || 1;
+    var recoverDelay = config.captureRecoverDelay || 1800;
+
+    for (var i = 0; i < maxRecover; i++) {
+        console.log("  截图连续失败，尝试自动重建截图会话 " + (i + 1) + "/" + maxRecover);
+        try { images.stopScreenCapture(); } catch (e) {}
+        sleep(500);
+        if (!requestScreenCapture()) {
+            console.log("  自动重建截图会话失败");
+            continue;
+        }
+        sleep(recoverDelay);
+        var img = retryCapture(tries, interval);
+        if (img) {
+            console.log("  截图会话已恢复");
+            return img;
+        }
+    }
+    return null;
 }
 
 function retryCapture(maxTries, intervalMs) {
@@ -56,6 +76,12 @@ function scrollDownSmall() {
     var distance = Math.round(h * config.accountSmallScrollRatio);
     var startY = Math.round(h * 0.72);
     swipe(w / 2, startY, w / 2, Math.max(Math.round(h * 0.30), startY - distance), 450);
+}
+
+function scrollToTopOnce() {
+    var w = device.width;
+    var h = device.height;
+    swipe(w / 2, Math.round(h * 0.28), w / 2, Math.round(h * 0.82), 650);
 }
 
 function goBack() {
@@ -82,9 +108,11 @@ module.exports = {
     initCapture: initCapture,
     safeCapture: safeCapture,
     ensureCapture: ensureCapture,
+    recoverCaptureSession: recoverCaptureSession,
     retryCapture: retryCapture,
     scrollDown: scrollDown,
     scrollDownSmall: scrollDownSmall,
+    scrollToTopOnce: scrollToTopOnce,
     goBack: goBack,
     toPixelRegion: toPixelRegion
 };

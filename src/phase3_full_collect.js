@@ -53,6 +53,11 @@
                 debug: true
             },
             pageDelay: 1200,
+            captureRetryTries: 12,
+            captureRetryInterval: 900,
+            captureRecoverEnabled: false,
+            captureRecoverMaxTries: 1,
+            captureRecoverDelay: 1800,
             maxSeries: 12,
             maxSeriesScrolls: 10,
             maxNoNewSeriesPages: 3,
@@ -61,11 +66,18 @@
             maxEmptyAccountPages: 2,
             accountSmallScrollRatio: 0.16,
             accountNextRowGap: 36,
+            finishBackMaxSteps: 4,
+            finishScrollTopSwipes: 8,
             scrollWait: 1800,
             seriesTabRoi: [0, 0.28, 1, 0.15],
             csvDir: dataDir,
             csvFile: joinPath(dataDir, "series_data.csv"),
-            indexFile: joinPath(dataDir, "series_index.json")
+            indexFile: joinPath(dataDir, "series_index.json"),
+            backend: {
+                enabled: true,
+                serverUrl: "http://192.168.65.182:5000",
+                collectorToken: "dev_token"
+            }
         };
         
         module.exports = config;
@@ -134,8 +146,8 @@
         }
         
         function charOverlapRatio(a, b) {
-            var sa = toSimplified(stripPunct(a));
-            var sb = toSimplified(stripPunct(b));
+            var sa = normalizeRecordKey(a);
+            var sb = normalizeRecordKey(b);
             if (sa.length === 0 || sb.length === 0) return 0;
             var shorter = sa.length <= sb.length ? sa : sb;
             var longer = sa.length <= sb.length ? sb : sa;
@@ -147,7 +159,37 @@
         }
         
         function normalizeRecordKey(s) {
-            return keepChineseOnly(toSimplified(stripPunct(clean(s))));
+            return normalizeOcrConfusions(toSimplified(stripPunct(clean(s))).toLowerCase());
+        }
+        
+        function normalizeOcrConfusions(s) {
+            return String(s || "")
+                .replace(/孑/g, "子")
+                .replace(/妳/g, "你")
+                .replace(/[丨|]/g, "1")
+                .replace(/[〇○]/g, "0");
+        }
+        
+        function similarityRatio(a, b) {
+            var ak = normalizeRecordKey(a);
+            var bk = normalizeRecordKey(b);
+            if (!ak || !bk) return 0;
+            if (ak === bk) return 1;
+            var overlap = charOverlapRatio(ak, bk);
+            var lenRatio = Math.min(ak.length, bk.length) / Math.max(ak.length, bk.length);
+            return overlap * 0.75 + lenRatio * 0.25;
+        }
+        
+        function isLikelySameText(a, b, threshold) {
+            threshold = threshold === undefined ? 0.86 : threshold;
+            var ak = normalizeRecordKey(a);
+            var bk = normalizeRecordKey(b);
+            if (!ak || !bk) return false;
+            if (ak === bk) return true;
+            if (ak.length >= 4 && bk.length >= 4) {
+                if (ak.indexOf(bk) >= 0 || bk.indexOf(ak) >= 0) return true;
+            }
+            return similarityRatio(ak, bk) >= threshold;
         }
         
         function isTabText(label) {
@@ -160,21 +202,6 @@
             return tabCount >= 2;
         }
         
-        function keepChineseOnly(s) {
-            s = String(s || "");
-            var result = "";
-            for (var i = 0; i < s.length; i++) {
-                var ch = s.charAt(i);
-                var code = ch.charCodeAt(0);
-                if ((code >= 0x4E00 && code <= 0x9FFF) ||
-                    (code >= 0x3400 && code <= 0x4DBF) ||
-                    (code >= 0xF900 && code <= 0xFAFF)) {
-                    result += ch;
-                }
-            }
-            return result;
-        }
-        
         module.exports = {
             clean: clean,
             stripPunct: stripPunct,
@@ -183,8 +210,10 @@
             hasChinese: hasChinese,
             charOverlapRatio: charOverlapRatio,
             normalizeRecordKey: normalizeRecordKey,
-            isTabText: isTabText,
-            keepChineseOnly: keepChineseOnly
+            normalizeOcrConfusions: normalizeOcrConfusions,
+            similarityRatio: similarityRatio,
+            isLikelySameText: isLikelySameText,
+            isTabText: isTabText
         };
         
     };
@@ -208,23 +237,43 @@
         }
         
         function ensureCapture() {
-            var img = safeCapture();
+            var tries = config.captureRetryTries || 8;
+            var interval = config.captureRetryInterval || 650;
+            var img = retryCapture(tries, interval);
             if (img) return img;
         
-            console.log("  首帧失败，重新申请权限...");
-            try { images.stopScreenCapture(); } catch (e) {}
-            sleep(500);
-            if (!requestScreenCapture()) {
-                console.log("[错误] 截图权限失败");
-                exit();
+            if (config.captureRecoverEnabled) {
+                img = recoverCaptureSession(tries, interval);
+                if (img) return img;
             }
-            sleep(1500);
-            img = safeCapture();
+        
             if (!img) {
-                console.log("[错误] 截图仍然失败，请重启 AutoJs6");
-                exit();
+                console.log("[错误] 截图连续失败，请手动检查投屏/截图权限后重跑脚本");
+                return null;
             }
             return img;
+        }
+        
+        function recoverCaptureSession(tries, interval) {
+            var maxRecover = config.captureRecoverMaxTries || 1;
+            var recoverDelay = config.captureRecoverDelay || 1800;
+        
+            for (var i = 0; i < maxRecover; i++) {
+                console.log("  截图连续失败，尝试自动重建截图会话 " + (i + 1) + "/" + maxRecover);
+                try { images.stopScreenCapture(); } catch (e) {}
+                sleep(500);
+                if (!requestScreenCapture()) {
+                    console.log("  自动重建截图会话失败");
+                    continue;
+                }
+                sleep(recoverDelay);
+                var img = retryCapture(tries, interval);
+                if (img) {
+                    console.log("  截图会话已恢复");
+                    return img;
+                }
+            }
+            return null;
         }
         
         function retryCapture(maxTries, intervalMs) {
@@ -248,6 +297,12 @@
             var distance = Math.round(h * config.accountSmallScrollRatio);
             var startY = Math.round(h * 0.72);
             swipe(w / 2, startY, w / 2, Math.max(Math.round(h * 0.30), startY - distance), 450);
+        }
+        
+        function scrollToTopOnce() {
+            var w = device.width;
+            var h = device.height;
+            swipe(w / 2, Math.round(h * 0.28), w / 2, Math.round(h * 0.82), 650);
         }
         
         function goBack() {
@@ -274,9 +329,11 @@
             initCapture: initCapture,
             safeCapture: safeCapture,
             ensureCapture: ensureCapture,
+            recoverCaptureSession: recoverCaptureSession,
             retryCapture: retryCapture,
             scrollDown: scrollDown,
             scrollDownSmall: scrollDownSmall,
+            scrollToTopOnce: scrollToTopOnce,
             goBack: goBack,
             toPixelRegion: toPixelRegion
         };
@@ -353,6 +410,31 @@
             return 0;
         }
         
+        function extractProfileAccountName(ocrResult, screenHeight, fallbackName) {
+            var items = (ocrResult && ocrResult.items) || [];
+            var best = null;
+        
+            for (var i = 0; i < items.length; i++) {
+                var label = cleanAccountLabel(items[i].label || "");
+                if (!isProfileNameCandidate(label)) continue;
+        
+                var b = items[i].bounds || {};
+                var x = (Number(b.left || 0) + Number(b.right || 0)) / 2;
+                var y = (Number(b.top || 0) + Number(b.bottom || 0)) / 2;
+                if (y < screenHeight * 0.10 || y > screenHeight * 0.30) continue;
+                if (x < device.width * 0.18 || x > device.width * 0.92) continue;
+        
+                var height = Math.max(1, Number(b.bottom || 0) - Number(b.top || 0));
+                var score = height * 6 - label.length * 4 - y * 0.05;
+                if (!best || score > best.score) {
+                    best = { label: label, score: score };
+                }
+            }
+        
+            if (best && best.label) return best.label;
+            return cleanAccountLabel(fallbackName || "");
+        }
+        
         function isAccountRow(row, screenHeight) {
             var label = cleanAccountLabel(row.label);
             if (!label) return false;
@@ -389,9 +471,22 @@
             return text.clean(label);
         }
         
+        function isProfileNameCandidate(label) {
+            label = text.clean(label);
+            if (!label) return false;
+            if (label.length < 2 || label.length > 10) return false;
+            if (text.countChineseChars(label) < 2) return false;
+            if (/[，,。；;：:！!？?、]/.test(label)) return false;
+            if (/^(主页|视频|剧集|已关注|私信|关注|搜索|更多|返回|原创内容)$/.test(label)) return false;
+            if (/有限公司|文化传媒|广东|广州|福建|福州|惠州|市|区|省|分享|简介|好看|每天|更新|欢迎|觉得|关注/.test(label)) return false;
+            if (/^\d+条/.test(label)) return false;
+            return true;
+        }
+        
         module.exports = {
             extractAccounts: extractAccounts,
             extractFollowTotal: extractFollowTotal,
+            extractProfileAccountName: extractProfileAccountName,
             cleanAccountLabel: cleanAccountLabel
         };
         
@@ -847,6 +942,12 @@
         
             for (var i = 0; i < records.length; i++) {
                 if (recordKey(records[i].account, records[i].series) === key) return true;
+                if (isLikelyDuplicateRecord(records[i], account, series)) {
+                    console.log("  [去重] 疑似OCR差异重复，跳过: "
+                        + records[i].account + " / " + records[i].series
+                        + " ~= " + account + " / " + series);
+                    return true;
+                }
             }
             return false;
         }
@@ -1005,6 +1106,21 @@
             return accountKey + "::" + seriesKey;
         }
         
+        function isLikelyDuplicateRecord(record, account, series) {
+            if (!record) return false;
+            var accountSame = text.isLikelySameText(record.account, account, 0.86);
+            if (!accountSame) return false;
+        
+            var seriesKey = text.normalizeRecordKey(series);
+            var oldSeriesKey = text.normalizeRecordKey(record.series);
+            if (!seriesKey || !oldSeriesKey) return false;
+            if (seriesKey === oldSeriesKey) return true;
+            if (seriesKey.length >= 5 && oldSeriesKey.length >= 5) {
+                if (seriesKey.indexOf(oldSeriesKey) >= 0 || oldSeriesKey.indexOf(seriesKey) >= 0) return true;
+            }
+            return text.similarityRatio(oldSeriesKey, seriesKey) >= 0.84;
+        }
+        
         function displayTime(value) {
             value = String(value || "");
             var match = value.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
@@ -1027,6 +1143,7 @@
             appendCsv: appendCsv,
             saveIndex: saveIndex,
             addRecord: addRecord,
+            isLikelyDuplicateRecord: isLikelyDuplicateRecord,
             displayTime: displayTime
         };
         
@@ -1055,7 +1172,7 @@
                 if (!verifyImg) continue;
         
                 var vOcr = ocrRunner.ocrScreen(verifyImg, null);
-                if (isAccountProfile(vOcr)) return { success: true, img: verifyImg };
+                if (isAccountProfile(vOcr)) return { success: true, img: verifyImg, ocrResult: vOcr };
                 verifyImg.recycle();
             }
         
@@ -1078,10 +1195,10 @@
         function clickSeriesTab(initialImg, ocrRunner) {
             sleep(config.pageDelay);
         
-            var img = screen.retryCapture(5, 500);
+            var img = initialImg || null;
             if (!img) {
-                warn("剧集Tab截图失败，使用进入账号后的截图兜底");
-                img = initialImg || null;
+                img = screen.retryCapture(5, 500);
+                if (!img) warn("剧集Tab截图失败");
                 if (!img) return false;
             }
             var ownsImage = img !== initialImg;
@@ -1089,6 +1206,17 @@
             var w = img.getWidth();
             var h = img.getHeight();
             var ocrResult = ocrRunner.ocrScreen(img, null, "tab");
+        
+            if (looksLikeSeriesPage(ocrResult, w, h)) {
+                log("当前已在剧集页，跳过Tab点击，直接读取");
+                if (ownsImage) img.recycle();
+                return {
+                    success: true,
+                    alreadySeriesPage: true,
+                    firstPageOcr: ocrResult,
+                    firstPageHeight: h
+                };
+            }
         
             var best = null;
             for (var i = 0; i < (ocrResult.items || []).length; i++) {
@@ -1113,17 +1241,22 @@
                 click(best.x, best.y);
                 sleep(config.pageDelay);
                 if (ownsImage) img.recycle();
-                return true;
+                return { success: true, clickedTab: true };
             }
         
-            if (looksLikeSeriesPage(ocrResult, h)) {
+            if (looksLikeSeriesPage(ocrResult, w, h)) {
                 log("未定位到剧集Tab，但当前页面已有剧集卡片，直接读取");
                 if (ownsImage) img.recycle();
-                return true;
+                return {
+                    success: true,
+                    alreadySeriesPage: true,
+                    firstPageOcr: ocrResult,
+                    firstPageHeight: h
+                };
             }
         
             if (ownsImage) img.recycle();
-            return false;
+            return { success: false };
         }
         
         function tabScore(label) {
@@ -1154,19 +1287,42 @@
             };
         }
         
-        function looksLikeSeriesPage(ocrResult, h) {
+        function looksLikeSeriesPage(ocrResult, w, h) {
             var episodeCount = 0;
             var hasSeriesHeader = false;
+            var hasHomeVideoTabs = false;
+            var hasHomeTab = false;
+            var hasVideoTab = false;
+            var hasLatestVideoSection = false;
+            var lowerCardTextCount = 0;
             for (var i = 0; i < ((ocrResult && ocrResult.items) || []).length; i++) {
                 var item = ocrResult.items[i];
                 var label = text.clean(item.label || "").replace(/\s+/g, "");
                 var b = item.bounds || {};
+                var x = (Number(b.left || 0) + Number(b.right || 0)) / 2;
                 var y = (Number(b.top || 0) + Number(b.bottom || 0)) / 2;
-                if (label.indexOf("剧集") >= 0 && y > h * 0.25 && y < h * 0.70) hasSeriesHeader = true;
+                if (y > h * 0.25 && y < h * 0.50) {
+                    if (label === "主页") hasHomeTab = true;
+                    if (label === "视频") hasVideoTab = true;
+                }
+                if (label === "最新视频" || label === "作品") {
+                    hasLatestVideoSection = true;
+                }
+                if (label.indexOf("剧集") >= 0 && y > h * 0.25 && y < h * 0.70) {
+                    hasSeriesHeader = true;
+                }
                 if (/^\d{1,3}集$/.test(label) && y > h * 0.35) episodeCount++;
                 if (/^.+\d{1,3}集$/.test(label) && y > h * 0.35) episodeCount++;
+                if (y > h * 0.38 && text.countChineseChars(text.stripPunct(label)) >= 4) {
+                    lowerCardTextCount++;
+                }
             }
-            return hasSeriesHeader && episodeCount > 0;
+            hasHomeVideoTabs = hasHomeTab && hasVideoTab;
+            if (hasHomeVideoTabs || hasHomeTab || hasVideoTab || hasLatestVideoSection) return false;
+            return hasSeriesHeader && (
+                episodeCount > 0 ||
+                lowerCardTextCount >= 2
+            );
         }
         
         function isTabBounds(bounds, w, h) {
@@ -1185,6 +1341,196 @@
         
     };
 
+    __phase3Factories["reporter.js"] = function (require, module, exports) {
+        /**
+         * phase3/reporter.js - 采集结果上报后端
+         *
+         * 每轮采集结束后，将本轮结果 POST 到后端 /api/collect。
+         * 本地 CSV 仍保留完整备份，上报不影响本地存储。
+         */
+        
+        var config = require("./config.js");
+        var time = require("./time.js");
+        
+        /**
+         * 上报本轮采集结果到后端
+         * @param {Array} outputRecords - [{account, series, collectTime}, ...]
+         * @param {Object} summary - {scannedCount, successCount, failCount, endReason}
+         * @returns {Object} {ok, received, inserted, duplicates, notified, error}
+         */
+        function reportToBackend(outputRecords, summary) {
+            if (config.backend && config.backend.enabled === false) {
+                log("[上报] 后端上报已关闭，跳过");
+                return { ok: false, skipped: true, error: "backend disabled" };
+            }
+        
+            if (!outputRecords || outputRecords.length === 0) {
+                log("[上报] 没有可上报记录，跳过");
+                return { ok: true, skipped: true, received: 0, inserted: 0, duplicates: 0 };
+            }
+        
+            var serverUrl = (config.backend && config.backend.serverUrl) || "";
+            var token = (config.backend && config.backend.collectorToken) || "";
+        
+            if (!serverUrl) {
+                log("[上报] 后端地址未配置，跳过上报");
+                return { ok: false, error: "serverUrl 未配置" };
+            }
+        
+            var collectUrl = serverUrl.replace(/\/+$/, "") + "/api/collect";
+        
+            // 生成 run_id
+            var now = new Date();
+            var runId = time.beijingTime().replace(/[:\-\s]/g, "_")
+                .replace(/\.\d+/, "");
+        
+            // 收集本轮开始时间：取最早记录的采集时间
+            var startedAt = runId;
+            if (outputRecords.length > 0) {
+                startedAt = outputRecords[0].collectTime || time.beijingTime();
+            }
+            var finishedAt = time.beijingTime();
+        
+            // 设备标识
+            var deviceName = "";
+            try {
+                if (typeof device !== "undefined") {
+                    deviceName = device.model || device.product || "unknown";
+                }
+            } catch (e) {}
+            if (!deviceName) deviceName = "android_device";
+        
+            // 构建 records 数组
+            var records = [];
+            for (var i = 0; i < outputRecords.length; i++) {
+                records.push({
+                    account_name: outputRecords[i].account || "",
+                    series_name: outputRecords[i].series || "",
+                    episodes: outputRecords[i].episodes || "",
+                    collected_at: outputRecords[i].collectTime || finishedAt
+                });
+            }
+        
+            var payload = {
+                device: deviceName,
+                run_id: runId,
+                started_at: startedAt,
+                finished_at: finishedAt,
+                records: records
+            };
+        
+            log("[上报] 准备发送 " + records.length + " 条记录到 " + collectUrl);
+        
+            try {
+                var res;
+                if (typeof http.postJson === "function") {
+                    res = http.postJson(collectUrl, payload, {
+                        headers: {
+                            "Content-Type": "application/json; charset=utf-8",
+                            "X-Collector-Token": token
+                        }
+                    });
+                } else {
+                    // Fallback: 手动构造 POST
+                    var body = JSON.stringify(payload);
+                    res = http.post(collectUrl, body, {
+                        headers: {
+                            "Content-Type": "application/json; charset=utf-8",
+                            "X-Collector-Token": token
+                        }
+                    });
+                }
+        
+                var statusCode = res.statusCode || 0;
+                var bodyText = "";
+                try {
+                    if (typeof res.body === "function") {
+                        bodyText = res.body().string();
+                    } else if (typeof res.body === "object" && res.body.string) {
+                        bodyText = res.body.string();
+                    } else {
+                        bodyText = String(res.body || "");
+                    }
+                } catch (e) {
+                    bodyText = "[无法读取响应体]";
+                }
+        
+                log("[上报] HTTP " + statusCode + ": " + bodyText);
+        
+                if (statusCode === 200 || statusCode === 201) {
+                    try {
+                        var result = JSON.parse(bodyText);
+                        log("[上报] 成功: received=" + result.received
+                            + " inserted=" + result.inserted
+                            + " duplicates=" + result.duplicates
+                            + " notified=" + result.notified);
+                        return result;
+                    } catch (e) {
+                        log("[上报] JSON 解析失败: " + e);
+                        return { ok: false, error: "JSON 解析失败" };
+                    }
+                } else {
+                    log("[上报] 失败: HTTP " + statusCode);
+                    return { ok: false, error: "HTTP " + statusCode, body: bodyText };
+                }
+            } catch (e) {
+                log("[上报] 网络异常: " + e);
+                return { ok: false, error: String(e) };
+            }
+        }
+        
+        /**
+         * 发送心跳到后端
+         * @param {string} status - "alive" | "collecting" | "idle" | "error"
+         */
+        function sendHeartbeat(status) {
+            if (config.backend && config.backend.enabled === false) return;
+        
+            var serverUrl = (config.backend && config.backend.serverUrl) || "";
+            var token = (config.backend && config.backend.collectorToken) || "";
+        
+            if (!serverUrl) return;
+        
+            var heartbeatUrl = serverUrl.replace(/\/+$/, "") + "/api/heartbeat";
+            var deviceName = "";
+            try {
+                if (typeof device !== "undefined") {
+                    deviceName = device.model || device.product || "unknown";
+                }
+            } catch (e) {}
+            if (!deviceName) deviceName = "android_device";
+        
+            var payload = { device: deviceName, status: status || "alive" };
+        
+            try {
+                if (typeof http.postJson === "function") {
+                    http.postJson(heartbeatUrl, payload, {
+                        headers: {
+                            "Content-Type": "application/json; charset=utf-8",
+                            "X-Collector-Token": token
+                        }
+                    });
+                } else {
+                    http.post(heartbeatUrl, JSON.stringify(payload), {
+                        headers: {
+                            "Content-Type": "application/json; charset=utf-8",
+                            "X-Collector-Token": token
+                        }
+                    });
+                }
+                log("[心跳] 已发送: " + status);
+            } catch (e) {
+                log("[心跳] 发送异常: " + e);
+            }
+        }
+        
+        module.exports = {
+            reportToBackend: reportToBackend,
+            sendHeartbeat: sendHeartbeat
+        };
+        
+    };
+
     __phase3Factories["main.js"] = function (require, module, exports) {
         "auto";
         
@@ -1195,23 +1541,33 @@
         var seriesParser = require("./series_parser.js");
         var csvStore = require("./csv_store.js");
         var actions = require("./actions.js");
+        var reporter = require("./reporter.js");
         var textUtils = require("./text_utils.js");
         var time = require("./time.js");
         
-        function collectSeries() {
+        function collectSeries(initialPage) {
             var allNames = [];
             var noNewCount = 0;
         
             sleep(config.pageDelay);
             for (var scroll = 0; scroll < config.maxSeriesScrolls; scroll++) {
-                var pageImg = screen.ensureCapture();
-                if (!pageImg) {
-                    warn("剧集页截图失败，结束当前账号采集");
-                    break;
-                }
+                var pageNames;
+                if (scroll === 0 && initialPage && initialPage.ocrResult) {
+                    pageNames = seriesParser.extractCompleteCardTitles(
+                        initialPage.ocrResult.items || [],
+                        initialPage.height || device.height
+                    );
+                    log("复用已在剧集页截图读取第一屏");
+                } else {
+                    var pageImg = screen.ensureCapture();
+                    if (!pageImg) {
+                        warn("剧集页截图失败，结束当前账号采集");
+                        break;
+                    }
         
-                var pageNames = seriesParser.readSeriesNames(pageImg, ocr);
-                pageImg.recycle();
+                    pageNames = seriesParser.readSeriesNames(pageImg, ocr);
+                    pageImg.recycle();
+                }
         
                 var beforeCount = allNames.length;
                 allNames = seriesParser.mergeAndDedup(allNames, pageNames);
@@ -1242,11 +1598,18 @@
             return allNames.slice(0, config.maxSeries);
         }
         
-        function markNewSeries(existingRecords, outputRecords, accountName, seriesNames) {
+        function markNewSeries(existingRecords, outputRecords, observedRecords, accountName, seriesNames) {
             var appended = 0;
             var newRows = [];
         
             seriesNames.forEach(function (seriesName) {
+                var collectTime = time.beijingTime();
+                observedRecords.push({
+                    account: accountName,
+                    series: seriesName,
+                    collectTime: collectTime
+                });
+        
                 if (csvStore.csvExists(existingRecords, accountName, seriesName)) {
                     log("CSV已存在，跳过：" + accountName + " / " + seriesName);
                     return;
@@ -1255,7 +1618,7 @@
                 var row = {
                     account: accountName,
                     series: seriesName,
-                    collectTime: time.beijingTime()
+                    collectTime: collectTime
                 };
                 outputRecords.push(row);
                 newRows.push(row);
@@ -1272,22 +1635,7 @@
             return appended;
         }
         
-        function collectAccount(account, existingRecords, outputRecords) {
-            // 过滤字母/符号，只保留中文（不影响识别阶段的跳过逻辑）
-            account.label = textUtils.keepChineseOnly(account.label);
-            // 截断规则：以常见结尾词为界，摒弃后方 OCR 误识别字符
-            var truncations = ["剧场版", "剧场", "短剧", "动漫", "动画"];
-            for (var t = 0; t < truncations.length; t++) {
-                var idx = account.label.indexOf(truncations[t]);
-                if (idx >= 0 && idx + truncations[t].length < account.label.length) {
-                    account.label = account.label.substring(0, idx + truncations[t].length);
-                    break;
-                }
-            }
-            if (!account.label || account.label.length < 2) {
-                warn("账号名过滤后为空，跳过");
-                return false;
-            }
+        function collectAccount(account, existingRecords, outputRecords, observedRecords) {
             log("进入账号：" + account.label);
         
             var clickResult = actions.clickAccount(account, ocr);
@@ -1296,25 +1644,42 @@
                 return false;
             }
         
-            var tabOk = actions.clickSeriesTab(clickResult.img, ocr);
+            var profileAccountName = accountParser.extractProfileAccountName(
+                clickResult.ocrResult,
+                clickResult.img.getHeight(),
+                account.label
+            );
+            if (profileAccountName && profileAccountName !== account.label) {
+                log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
+            }
+        
+            var tabResult = actions.clickSeriesTab(clickResult.img, ocr);
             clickResult.img.recycle();
-            if (!tabOk) {
+            if (!tabResult.success) {
                 warn("未找到剧集Tab，跳过：" + account.label);
                 screen.goBack();
                 sleep(config.pageDelay);
                 return false;
             }
         
-            var seriesNames = collectSeries();
-            var appended = markNewSeries(existingRecords, outputRecords, account.label, seriesNames);
-            log("账号完成：" + account.label + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
+            var initialSeriesPage = null;
+            if (tabResult.alreadySeriesPage) {
+                initialSeriesPage = {
+                    ocrResult: tabResult.firstPageOcr,
+                    height: tabResult.firstPageHeight
+                };
+            }
+            var seriesNames = collectSeries(initialSeriesPage);
+            var accountNameForCsv = profileAccountName || account.label;
+            var appended = markNewSeries(existingRecords, outputRecords, observedRecords, accountNameForCsv, seriesNames);
+            log("账号完成：" + accountNameForCsv + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
         
             screen.goBack();
             sleep(config.pageDelay);
             return true;
         }
         
-        function collectAccountsOnce(existingRecords, outputRecords) {
+        function collectAccountsOnce(existingRecords, outputRecords, observedRecords) {
             var processedAccounts = {};
             var processedAccountLabels = [];
             var lastAccountLabel = "";
@@ -1324,14 +1689,23 @@
             var emptyPages = 0;
             var skippedTopOnce = false;
             var targetAccountCount = 0;
+            var endedOnFollowingList = true;
+            var endReason = "unknown";
         
             for (var step = 0; step < config.maxAccountSteps; step++) {
                 if (targetAccountCount > 0 && scannedCount >= targetAccountCount) {
                     log("已遍历关注账号数 " + scannedCount + "/" + targetAccountCount + "，结束");
+                    endReason = "scanned_all_accounts";
                     break;
                 }
         
                 var img = screen.ensureCapture();
+                if (!img) {
+                    warn("关注列表截图连续失败，结束本轮遍历");
+                    endedOnFollowingList = false;
+                    endReason = "capture_failed";
+                    break;
+                }
                 var ocrResult = ocr.ocrScreen(img, null, "account");
                 if (targetAccountCount === 0) {
                     var followTotal = accountParser.extractFollowTotal(ocrResult);
@@ -1374,6 +1748,7 @@
                     emptyPages++;
                     if (emptyPages >= config.maxEmptyAccountPages) {
                         log("连续没有新账号，结束关注列表遍历");
+                        endReason = "no_new_accounts";
                         break;
                     }
                     screen.scrollDownSmall();
@@ -1386,7 +1761,7 @@
                 lastAccountLabel = targetAccount.label;
                 scannedCount++;
         
-                if (collectAccount(targetAccount, existingRecords, outputRecords)) {
+                if (collectAccount(targetAccount, existingRecords, outputRecords, observedRecords)) {
                     successCount++;
                 } else {
                     failCount++;
@@ -1396,7 +1771,9 @@
             return {
                 scannedCount: scannedCount,
                 successCount: successCount,
-                failCount: failCount
+                failCount: failCount,
+                endedOnFollowingList: endedOnFollowingList,
+                endReason: endReason
             };
         }
         
@@ -1444,6 +1821,73 @@
             return textUtils.charOverlapRatio(ak, bk) >= 0.92;
         }
         
+        function isFollowingListPage(ocrResult) {
+            var items = (ocrResult && ocrResult.items) || [];
+            var joined = items.map(function (item) {
+                return textUtils.normalizeRecordKey(item.label || "");
+            }).join(" ");
+            if (joined.indexOf("我的关注") >= 0) return true;
+            if (joined.indexOf("关注") >= 0 && joined.indexOf("已关注") < 0 && joined.indexOf("私信") < 0) return true;
+            return accountParser.extractFollowTotal(ocrResult) > 0;
+        }
+        
+        function captureAndCheckFollowingList() {
+            var img = screen.ensureCapture();
+            if (!img) return null;
+            var ocrResult = ocr.ocrScreen(img, null, "account");
+            var ok = isFollowingListPage(ocrResult);
+            img.recycle();
+            return ok;
+        }
+        
+        function returnToFollowingList() {
+            for (var i = 0; i < config.finishBackMaxSteps; i++) {
+                var check = captureAndCheckFollowingList();
+                if (check === true) {
+                    log("收尾: 已回到关注列表");
+                    return true;
+                }
+                if (check === null) {
+                    warn("收尾: 截图失败，无法确认当前位置，跳过返回操作");
+                    return false;
+                }
+                log("收尾: 当前不在关注列表，执行返回 " + (i + 1) + "/" + config.finishBackMaxSteps);
+                screen.goBack();
+                sleep(config.pageDelay);
+            }
+            var finalCheck = captureAndCheckFollowingList();
+            if (finalCheck === true) {
+                log("收尾: 已回到关注列表");
+                return true;
+            }
+            if (finalCheck === null) {
+                warn("收尾: 截图失败，无法确认当前位置");
+                return false;
+            }
+            warn("收尾: 未能确认回到关注列表");
+            return false;
+        }
+        
+        function scrollFollowingListToTop() {
+            log("收尾: 尝试回到关注列表顶部");
+            for (var i = 0; i < config.finishScrollTopSwipes; i++) {
+                screen.scrollToTopOnce();
+                sleep(650);
+            }
+            log("收尾: 已执行顶部回滚手势 " + config.finishScrollTopSwipes + " 次");
+        }
+        
+        function finishRun(summary) {
+            if (summary && summary.endedOnFollowingList) {
+                log("收尾: 主流程结束时已在关注列表，原因=" + summary.endReason);
+                scrollFollowingListToTop();
+                return;
+            }
+            if (returnToFollowingList()) {
+                scrollFollowingListToTop();
+            }
+        }
+        
         function main() {
             console.show();
             log("启动关注账号剧集采集");
@@ -1455,11 +1899,26 @@
             log("已加载历史记录 " + existingRecords.length + " 条");
         
             var outputRecords = [];
-            var summary = collectAccountsOnce(existingRecords, outputRecords);
+            var observedRecords = [];
+            var summary = collectAccountsOnce(existingRecords, outputRecords, observedRecords);
+        
+            finishRun(summary);
         
             if (outputRecords.length === 0) {
                 log("没有新增剧集记录");
+            } else {
+                log("本地新增剧集记录 " + outputRecords.length + " 条");
             }
+        
+            if (observedRecords.length > 0) {
+                // 上报本轮识别到的全部记录，由后端统一去重、入库和通知。
+                reporter.reportToBackend(observedRecords, summary);
+            } else {
+                log("本轮没有可上报的剧集识别结果");
+            }
+        
+            // 发送心跳
+            reporter.sendHeartbeat("idle");
         
             log("采集结束：遍历账号 " + summary.scannedCount
                 + " 个，成功 " + summary.successCount

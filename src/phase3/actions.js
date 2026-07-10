@@ -20,7 +20,7 @@ function clickAccount(account, ocrRunner) {
         if (!verifyImg) continue;
 
         var vOcr = ocrRunner.ocrScreen(verifyImg, null);
-        if (isAccountProfile(vOcr)) return { success: true, img: verifyImg };
+        if (isAccountProfile(vOcr)) return { success: true, img: verifyImg, ocrResult: vOcr };
         verifyImg.recycle();
     }
 
@@ -43,10 +43,10 @@ function isAccountProfile(ocrResult) {
 function clickSeriesTab(initialImg, ocrRunner) {
     sleep(config.pageDelay);
 
-    var img = screen.retryCapture(5, 500);
+    var img = initialImg || null;
     if (!img) {
-        warn("剧集Tab截图失败，使用进入账号后的截图兜底");
-        img = initialImg || null;
+        img = screen.retryCapture(5, 500);
+        if (!img) warn("剧集Tab截图失败");
         if (!img) return false;
     }
     var ownsImage = img !== initialImg;
@@ -54,6 +54,17 @@ function clickSeriesTab(initialImg, ocrRunner) {
     var w = img.getWidth();
     var h = img.getHeight();
     var ocrResult = ocrRunner.ocrScreen(img, null, "tab");
+
+    if (looksLikeSeriesPage(ocrResult, w, h)) {
+        log("当前已在剧集页，跳过Tab点击，直接读取");
+        if (ownsImage) img.recycle();
+        return {
+            success: true,
+            alreadySeriesPage: true,
+            firstPageOcr: ocrResult,
+            firstPageHeight: h
+        };
+    }
 
     var best = null;
     for (var i = 0; i < (ocrResult.items || []).length; i++) {
@@ -78,17 +89,22 @@ function clickSeriesTab(initialImg, ocrRunner) {
         click(best.x, best.y);
         sleep(config.pageDelay);
         if (ownsImage) img.recycle();
-        return true;
+        return { success: true, clickedTab: true };
     }
 
-    if (looksLikeSeriesPage(ocrResult, h)) {
+    if (looksLikeSeriesPage(ocrResult, w, h)) {
         log("未定位到剧集Tab，但当前页面已有剧集卡片，直接读取");
         if (ownsImage) img.recycle();
-        return true;
+        return {
+            success: true,
+            alreadySeriesPage: true,
+            firstPageOcr: ocrResult,
+            firstPageHeight: h
+        };
     }
 
     if (ownsImage) img.recycle();
-    return false;
+    return { success: false };
 }
 
 function tabScore(label) {
@@ -119,19 +135,42 @@ function tabClickPoint(label, bounds) {
     };
 }
 
-function looksLikeSeriesPage(ocrResult, h) {
+function looksLikeSeriesPage(ocrResult, w, h) {
     var episodeCount = 0;
     var hasSeriesHeader = false;
+    var hasHomeVideoTabs = false;
+    var hasHomeTab = false;
+    var hasVideoTab = false;
+    var hasLatestVideoSection = false;
+    var lowerCardTextCount = 0;
     for (var i = 0; i < ((ocrResult && ocrResult.items) || []).length; i++) {
         var item = ocrResult.items[i];
         var label = text.clean(item.label || "").replace(/\s+/g, "");
         var b = item.bounds || {};
+        var x = (Number(b.left || 0) + Number(b.right || 0)) / 2;
         var y = (Number(b.top || 0) + Number(b.bottom || 0)) / 2;
-        if (label.indexOf("剧集") >= 0 && y > h * 0.25 && y < h * 0.70) hasSeriesHeader = true;
+        if (y > h * 0.25 && y < h * 0.50) {
+            if (label === "主页") hasHomeTab = true;
+            if (label === "视频") hasVideoTab = true;
+        }
+        if (label === "最新视频" || label === "作品") {
+            hasLatestVideoSection = true;
+        }
+        if (label.indexOf("剧集") >= 0 && y > h * 0.25 && y < h * 0.70) {
+            hasSeriesHeader = true;
+        }
         if (/^\d{1,3}集$/.test(label) && y > h * 0.35) episodeCount++;
         if (/^.+\d{1,3}集$/.test(label) && y > h * 0.35) episodeCount++;
+        if (y > h * 0.38 && text.countChineseChars(text.stripPunct(label)) >= 4) {
+            lowerCardTextCount++;
+        }
     }
-    return hasSeriesHeader && episodeCount > 0;
+    hasHomeVideoTabs = hasHomeTab && hasVideoTab;
+    if (hasHomeVideoTabs || hasHomeTab || hasVideoTab || hasLatestVideoSection) return false;
+    return hasSeriesHeader && (
+        episodeCount > 0 ||
+        lowerCardTextCount >= 2
+    );
 }
 
 function isTabBounds(bounds, w, h) {

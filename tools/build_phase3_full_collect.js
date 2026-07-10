@@ -15,6 +15,7 @@ const modules = [
     "ocr.js",
     "csv_store.js",
     "actions.js",
+    "reporter.js",
     "main.js"
 ];
 

@@ -48,6 +48,31 @@ function extractFollowTotal(ocrResult) {
     return 0;
 }
 
+function extractProfileAccountName(ocrResult, screenHeight, fallbackName) {
+    var items = (ocrResult && ocrResult.items) || [];
+    var best = null;
+
+    for (var i = 0; i < items.length; i++) {
+        var label = cleanAccountLabel(items[i].label || "");
+        if (!isProfileNameCandidate(label)) continue;
+
+        var b = items[i].bounds || {};
+        var x = (Number(b.left || 0) + Number(b.right || 0)) / 2;
+        var y = (Number(b.top || 0) + Number(b.bottom || 0)) / 2;
+        if (y < screenHeight * 0.10 || y > screenHeight * 0.30) continue;
+        if (x < device.width * 0.18 || x > device.width * 0.92) continue;
+
+        var height = Math.max(1, Number(b.bottom || 0) - Number(b.top || 0));
+        var score = height * 6 - label.length * 4 - y * 0.05;
+        if (!best || score > best.score) {
+            best = { label: label, score: score };
+        }
+    }
+
+    if (best && best.label) return best.label;
+    return cleanAccountLabel(fallbackName || "");
+}
+
 function isAccountRow(row, screenHeight) {
     var label = cleanAccountLabel(row.label);
     if (!label) return false;
@@ -84,8 +109,21 @@ function cleanAccountLabel(label) {
     return text.clean(label);
 }
 
+function isProfileNameCandidate(label) {
+    label = text.clean(label);
+    if (!label) return false;
+    if (label.length < 2 || label.length > 10) return false;
+    if (text.countChineseChars(label) < 2) return false;
+    if (/[，,。；;：:！!？?、]/.test(label)) return false;
+    if (/^(主页|视频|剧集|已关注|私信|关注|搜索|更多|返回|原创内容)$/.test(label)) return false;
+    if (/有限公司|文化传媒|广东|广州|福建|福州|惠州|市|区|省|分享|简介|好看|每天|更新|欢迎|觉得|关注/.test(label)) return false;
+    if (/^\d+条/.test(label)) return false;
+    return true;
+}
+
 module.exports = {
     extractAccounts: extractAccounts,
     extractFollowTotal: extractFollowTotal,
+    extractProfileAccountName: extractProfileAccountName,
     cleanAccountLabel: cleanAccountLabel
 };

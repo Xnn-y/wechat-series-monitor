@@ -59,8 +59,8 @@ function hasChinese(s) {
 }
 
 function charOverlapRatio(a, b) {
-    var sa = toSimplified(stripPunct(a));
-    var sb = toSimplified(stripPunct(b));
+    var sa = normalizeRecordKey(a);
+    var sb = normalizeRecordKey(b);
     if (sa.length === 0 || sb.length === 0) return 0;
     var shorter = sa.length <= sb.length ? sa : sb;
     var longer = sa.length <= sb.length ? sb : sa;
@@ -72,7 +72,37 @@ function charOverlapRatio(a, b) {
 }
 
 function normalizeRecordKey(s) {
-    return toSimplified(stripPunct(clean(s))).toLowerCase();
+    return normalizeOcrConfusions(toSimplified(stripPunct(clean(s))).toLowerCase());
+}
+
+function normalizeOcrConfusions(s) {
+    return String(s || "")
+        .replace(/孑/g, "子")
+        .replace(/妳/g, "你")
+        .replace(/[丨|]/g, "1")
+        .replace(/[〇○]/g, "0");
+}
+
+function similarityRatio(a, b) {
+    var ak = normalizeRecordKey(a);
+    var bk = normalizeRecordKey(b);
+    if (!ak || !bk) return 0;
+    if (ak === bk) return 1;
+    var overlap = charOverlapRatio(ak, bk);
+    var lenRatio = Math.min(ak.length, bk.length) / Math.max(ak.length, bk.length);
+    return overlap * 0.75 + lenRatio * 0.25;
+}
+
+function isLikelySameText(a, b, threshold) {
+    threshold = threshold === undefined ? 0.86 : threshold;
+    var ak = normalizeRecordKey(a);
+    var bk = normalizeRecordKey(b);
+    if (!ak || !bk) return false;
+    if (ak === bk) return true;
+    if (ak.length >= 4 && bk.length >= 4) {
+        if (ak.indexOf(bk) >= 0 || bk.indexOf(ak) >= 0) return true;
+    }
+    return similarityRatio(ak, bk) >= threshold;
 }
 
 function isTabText(label) {
@@ -93,5 +123,8 @@ module.exports = {
     hasChinese: hasChinese,
     charOverlapRatio: charOverlapRatio,
     normalizeRecordKey: normalizeRecordKey,
+    normalizeOcrConfusions: normalizeOcrConfusions,
+    similarityRatio: similarityRatio,
+    isLikelySameText: isLikelySameText,
     isTabText: isTabText
 };

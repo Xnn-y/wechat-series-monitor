@@ -1,41 +1,169 @@
-# 微信视频号自动采集脚本
+# 微信视频号剧集采集系统
 
-本项目使用 AutoJs6 在手机端采集微信视频号关注账号的剧集信息。当前开发范围只从视频号「我的关注」列表之后开始：遍历关注账号、进入账号主页、点击「剧集」栏，直接在剧集栏页面 OCR 识别可见剧集名称，下滑继续读取，并记录读取时的北京时间。当前只采用本地 OCR 识别和坐标点击，不再调用外部 AI/视觉模型。
+这个项目用于监控微信视频号关注账号的剧集更新。
 
-## 目录结构
+当前架构是：
 
 ```text
-docs/
-  README_RUN.md              运行说明
-  DEVELOPMENT_PLAN.md        开发计划和阶段验收
-src/
-  config.js                  全局配置
-  master_collect.js          当前主控入口：从“我的关注”列表开始采集
-  actions/
-    wechat_actions.js        可复用微信点击动作模块
-    click_*.js               单步点击动作验证脚本
-  flows/
-    open_following_list.js   串联动作进入视频号“我的关注”
-  collectors/
-    collect_current_series.js 单页免费剧集弹窗验证备用
-    collect_current_video.js 单视频详情页文案采集备用
-  probes/
-    probe_accessibility_tree.js
-    probe_screen.js
-  shared/
-    ocr_click.js             OCR 点击辅助
-assets/
-  templates/                 后续模板匹配图片
-logs/                        本地调试留痕
+AutoJs6 手机采集端
+  -> 本地 CSV 备份
+  -> 后端 API 上报
+  -> SQLite 去重入库
+  -> 企业微信群机器人通知
+  -> 团队 Dashboard 查看 / CSV 导出
 ```
 
-## 常用入口
+## 当前主线
 
-- V1 页面探测：`src/probes/probe_accessibility_tree.js`
-- 轻量截图/OCR 探测：`src/probes/probe_screen.js`
-- 当前主控采集：`src/master_collect.js`（前置：已经停在“我的关注”列表）
-- 打开我的关注流程：`src/flows/open_following_list.js`（可选辅助，不是当前主线）
-- 单页免费剧集弹窗验证备用：`src/collectors/collect_current_series.js`
-- 单视频详情文案采集备用：`src/collectors/collect_current_video.js`
+```text
+src/
+  phase3/                    AutoJs6 模块化源码
+  phase3_full_collect.js     AutoJs6 直接运行的合成单文件脚本
 
-详细运行步骤见 [docs/README_RUN.md](docs/README_RUN.md)。
+server/
+  src/                       Flask 后端源码
+  tests/                     后端测试脚本
+  static/dashboard.html      团队查看页面
+  requirements.txt           后端依赖
+  .env.example               环境变量示例
+
+tools/
+  build_phase3_full_collect.js
+
+docs/
+  PROJECT_CLEANUP_AND_BACKEND_PLAN.md
+```
+
+旧路线、探测脚本、历史快照已经放在本地归档目录中，不再作为当前主线维护。
+
+## 手机端运行
+
+修改 `src/phase3/` 后，先重新生成 AutoJs6 单文件：
+
+```powershell
+node tools\build_phase3_full_collect.js
+```
+
+然后把下面这个文件放到 AutoJs6 运行：
+
+```text
+src/phase3_full_collect.js
+```
+
+手机端本地备份路径：
+
+```text
+/sdcard/AutoJs6/phase3_data/series_data.csv
+/sdcard/AutoJs6/phase3_data/series_index.json
+```
+
+## 后端运行
+
+安装依赖：
+
+```powershell
+python -m pip install -r server\requirements.txt
+```
+
+复制环境变量模板：
+
+```powershell
+copy server\.env.example server\.env
+```
+
+本地开发默认数据库：
+
+```text
+server/data/collector.dev.db
+```
+
+启动后端：
+
+```powershell
+python server\src\app.py
+```
+
+访问：
+
+```text
+http://127.0.0.1:5000/health
+http://127.0.0.1:5000/dashboard
+```
+
+## 测试
+
+PowerShell 建议先设置 UTF-8：
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+```
+
+按顺序运行：
+
+```powershell
+python server\tests\test_api.py
+python server\tests\test_dashboard.py
+python server\tests\test_e2e.py
+node --check src\phase3_full_collect.js
+```
+
+测试使用独立数据库：
+
+```text
+server/data/collector.test.db
+```
+
+## 服务器部署配置
+
+服务器上使用 `server/.env` 指定生产配置：
+
+```text
+APP_ENV=production
+DATABASE_URL=sqlite:////opt/series-monitor/server/data/collector.prod.db
+COLLECTOR_TOKEN=change_me
+ADMIN_PASSWORD=change_me
+WECOM_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...
+```
+
+AutoJs6 端需要把 `src/phase3/config.js` 里的后端地址改成服务器地址：
+
+```javascript
+backend: {
+    enabled: true,
+    serverUrl: "https://your-domain.example",
+    collectorToken: "same_token_as_server"
+}
+```
+
+## Git 约定
+
+纳入 Git 的内容：
+
+```text
+src/phase3/
+src/phase3_full_collect.js
+server/src/
+server/tests/
+server/requirements.txt
+server/.env.example
+tools/
+docs/
+README.md
+```
+
+不纳入 Git 的内容：
+
+```text
+server/.env
+server/data/*.db
+__pycache__/
+_snapshots/
+archive/
+logs/
+```
+
+后续更新服务器时建议流程：
+
+```text
+本地修改 -> 本地测试 -> git commit -> 推送 -> 服务器 git pull -> 重启服务
+```

@@ -22,6 +22,12 @@ function csvExists(records, account, series) {
 
     for (var i = 0; i < records.length; i++) {
         if (recordKey(records[i].account, records[i].series) === key) return true;
+        if (isLikelyDuplicateRecord(records[i], account, series)) {
+            console.log("  [去重] 疑似OCR差异重复，跳过: "
+                + records[i].account + " / " + records[i].series
+                + " ~= " + account + " / " + series);
+            return true;
+        }
     }
     return false;
 }
@@ -180,6 +186,21 @@ function recordKey(account, series) {
     return accountKey + "::" + seriesKey;
 }
 
+function isLikelyDuplicateRecord(record, account, series) {
+    if (!record) return false;
+    var accountSame = text.isLikelySameText(record.account, account, 0.86);
+    if (!accountSame) return false;
+
+    var seriesKey = text.normalizeRecordKey(series);
+    var oldSeriesKey = text.normalizeRecordKey(record.series);
+    if (!seriesKey || !oldSeriesKey) return false;
+    if (seriesKey === oldSeriesKey) return true;
+    if (seriesKey.length >= 5 && oldSeriesKey.length >= 5) {
+        if (seriesKey.indexOf(oldSeriesKey) >= 0 || oldSeriesKey.indexOf(seriesKey) >= 0) return true;
+    }
+    return text.similarityRatio(oldSeriesKey, seriesKey) >= 0.84;
+}
+
 function displayTime(value) {
     value = String(value || "");
     var match = value.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
@@ -202,5 +223,6 @@ module.exports = {
     appendCsv: appendCsv,
     saveIndex: saveIndex,
     addRecord: addRecord,
+    isLikelyDuplicateRecord: isLikelyDuplicateRecord,
     displayTime: displayTime
 };

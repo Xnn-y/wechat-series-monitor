@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>剧集采集监控后台</title>
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --card-bg: #ffffff;
+    --text: #1a1a2e;
+    --text-secondary: #6b7280;
+    --primary: #4f46e5;
+    --primary-light: #eef2ff;
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --border: #e5e7eb;
+    --radius: 10px;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
+
+  /* 登录遮罩 */
+  .login-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+  }
+  .login-box {
+    background: var(--card-bg); border-radius: var(--radius); padding: 32px;
+    width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,.15);
+    text-align: center;
+  }
+  .login-box h2 { margin-bottom: 24px; font-size: 1.4rem; }
+  .login-box input {
+    width: 100%; padding: 10px 14px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 1rem; margin-bottom: 12px; outline: none;
+  }
+  .login-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
+  .login-box button {
+    width: 100%; padding: 10px; background: var(--primary); color: #fff;
+    border: none; border-radius: 8px; font-size: 1rem; cursor: pointer;
+    font-weight: 600;
+  }
+  .login-box button:hover { opacity: .9; }
+  .login-error { color: var(--danger); font-size: .85rem; margin-top: 8px; display: none; }
+
+  /* 主布局 */
+  .header {
+    background: var(--card-bg); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow);
+  }
+  .header h1 { font-size: 1.2rem; font-weight: 700; }
+  .header .status { font-size: .85rem; color: var(--text-secondary); }
+  .header .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.online { background: var(--success); }
+  .dot.offline { background: var(--danger); }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px 24px; }
+
+  /* 统计卡片 */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .stat-card {
+    background: var(--card-bg); border-radius: var(--radius); padding: 16px 20px;
+    box-shadow: var(--shadow); border: 1px solid var(--border);
+  }
+  .stat-card .label { font-size: .8rem; color: var(--text-secondary); margin-bottom: 4px; }
+  .stat-card .value { font-size: 1.6rem; font-weight: 700; }
+
+  /* 筛选栏 */
+  .filters {
+    background: var(--card-bg); border-radius: var(--radius); padding: 16px 20px;
+    margin-bottom: 16px; box-shadow: var(--shadow); border: 1px solid var(--border);
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+  }
+  .filter-group { display: flex; flex-direction: column; gap: 4px; }
+  .filter-group label { font-size: .78rem; color: var(--text-secondary); font-weight: 600; }
+  .filter-group input {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: .88rem; outline: none; min-width: 140px;
+  }
+  .filter-group input:focus { border-color: var(--primary); }
+  .filters button {
+    padding: 7px 16px; border: none; border-radius: 6px; font-size: .88rem;
+    cursor: pointer; font-weight: 600; transition: opacity .15s;
+  }
+  .filters button:hover { opacity: .85; }
+  .btn-search { background: var(--primary); color: #fff; }
+  .btn-export { background: var(--success); color: #fff; }
+  .btn-reset { background: var(--border); color: var(--text); }
+
+  /* 表格 */
+  .table-wrap {
+    background: var(--card-bg); border-radius: var(--radius);
+    box-shadow: var(--shadow); border: 1px solid var(--border); overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  thead { background: #f9fafb; }
+  th { padding: 10px 14px; text-align: left; font-weight: 700; color: var(--text-secondary); font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; border-bottom: 2px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--primary-light); }
+  .account-tag { display: inline-block; padding: 2px 8px; background: #f0fdf4; color: var(--success); border-radius: 4px; font-size: .8rem; font-weight: 600; }
+
+  /* 分页 */
+  .pagination {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 14px 0; font-size: .85rem;
+  }
+  .pagination button {
+    padding: 6px 12px; border: 1px solid var(--border); background: var(--card-bg);
+    border-radius: 6px; cursor: pointer; font-size: .85rem;
+  }
+  .pagination button:hover { background: var(--primary-light); border-color: var(--primary); }
+  .pagination button:disabled { opacity: .4; cursor: not-allowed; }
+  .pagination .active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  /* 空状态 & 加载 */
+  .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+  .loading { text-align: center; padding: 40px; color: var(--text-secondary); }
+
+  /* 响应式 */
+  @media (max-width: 768px) {
+    .filters { flex-direction: column; }
+    .filter-group input { min-width: 100%; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    th, td { padding: 8px 10px; font-size: .8rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 登录 -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>🔐 剧集采集监控</h2>
+    <input type="password" id="passwordInput" placeholder="请输入访问密码" autofocus>
+    <button onclick="doLogin()">登 录</button>
+    <p class="login-error" id="loginError">密码错误，请重试</p>
+  </div>
+</div>
+
+<!-- 页面主体 -->
+<div id="mainApp" style="display:none;">
+
+  <div class="header">
+    <h1>📺 剧集采集监控后台</h1>
+    <span class="status" id="statusBar">
+      <span class="dot online" id="statusDot"></span>
+      <span id="statusText">加载中...</span>
+    </span>
+  </div>
+
+  <div class="container">
+    <!-- 统计 -->
+    <div class="stats" id="statsRow"></div>
+
+    <!-- 筛选 -->
+    <div class="filters">
+      <div class="filter-group">
+        <label>账号</label>
+        <input type="text" id="filterAccount" placeholder="搜索账号名...">
+      </div>
+      <div class="filter-group">
+        <label>剧名</label>
+        <input type="text" id="filterSeries" placeholder="搜索剧名...">
+      </div>
+      <div class="filter-group">
+        <label>开始日期</label>
+        <input type="date" id="filterDateFrom">
+      </div>
+      <div class="filter-group">
+        <label>结束日期</label>
+        <input type="date" id="filterDateTo">
+      </div>
+      <button class="btn-search" onclick="search()">🔍 查询</button>
+      <button class="btn-export" onclick="exportCsv()">📥 导出CSV</button>
+      <button class="btn-reset" onclick="resetFilters()">↺ 重置</button>
+    </div>
+
+    <!-- OCR 别名管理 -->
+    <div class="filters" id="aliasPanel" style="display:none;">
+      <div style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <strong style="font-size:.9rem;">🔧 OCR 别名修正管理</strong>
+        <button onclick="toggleAliasPanel()" style="border:none;background:none;cursor:pointer;font-size:1.2rem;">×</button>
+      </div>
+      <div class="filter-group">
+        <label>OCR 错误文本</label>
+        <input type="text" id="aliasRaw" placeholder="如: 萌萌虎剧汤">
+      </div>
+      <div class="filter-group">
+        <label>修正为</label>
+        <input type="text" id="aliasCorrect" placeholder="如: 萌萌虎剧场">
+      </div>
+      <div class="filter-group">
+        <label>类型</label>
+        <select id="aliasType" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:.88rem;">
+          <option value="account">账号名</option>
+          <option value="series">剧集名</option>
+        </select>
+      </div>
+      <button class="btn-search" onclick="addAlias()">➕ 添加别名</button>
+      <div id="aliasList" style="width:100%;max-height:200px;overflow-y:auto;margin-top:8px;font-size:.82rem;"></div>
+    </div>
+
+    <!-- 表格 -->
+    <div class="table-wrap" id="tableWrap">
+      <p class="loading">加载中...</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "";
+
+let currentPage = 1;
+let currentFilters = {};
+const PAGE_SIZE = 50;
+
+// ===== 登录 =====
+function doLogin() {
+  var pwd = document.getElementById("passwordInput").value;
+  fetch(API_BASE + "/api/records?limit=1", {
+    headers: { "X-Admin-Password": pwd }
+  }).then(function(r) {
+    if (r.status === 401) {
+      document.getElementById("loginError").style.display = "block";
+      return;
+    }
+    sessionStorage.setItem("admin_pwd", pwd);
+    document.getElementById("loginOverlay").style.display = "none";
+    document.getElementById("mainApp").style.display = "block";
+    init();
+  });
+}
+
+var savedPwd = sessionStorage.getItem("admin_pwd");
+if (savedPwd) {
+  // 验证已保存密码
+  fetch(API_BASE + "/api/records?limit=1", {
+    headers: { "X-Admin-Password": savedPwd }
+  }).then(function(r) {
+    if (r.ok) {
+      document.getElementById("loginOverlay").style.display = "none";
+      document.getElementById("mainApp").style.display = "block";
+      init();
+    } else {
+      sessionStorage.removeItem("admin_pwd");
+    }
+  });
+}
+
+// 回车登录
+document.addEventListener("DOMContentLoaded", function() {
+  document.getElementById("passwordInput").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") doLogin();
+  });
+});
+
+// ===== 初始化 =====
+function init() {
+  loadStats();
+  search();
+}
+
+function getHeaders() {
+  return { "X-Admin-Password": savedPwd || "" };
+}
+
+// ===== 统计 =====
+function loadStats() {
+  fetch(API_BASE + "/api/records?limit=1", { headers: getHeaders() })
+    .then(r => r.json())
+    .then(d => updateStats(d.total));
+
+  fetch(API_BASE + "/api/runs?limit=1", { headers: getHeaders() })
+    .then(r => r.json())
+    .then(d => {
+      if (d.runs && d.runs.length > 0) {
+        var run = d.runs[0];
+        document.getElementById("statusDot").className = "dot online";
+        document.getElementById("statusText").textContent =
+          "设备 " + run.device_name + " | 最近采集 " + formatTime(run.finished_at);
+      } else {
+        document.getElementById("statusDot").className = "dot offline";
+        document.getElementById("statusText").textContent = "暂无采集记录";
+      }
+    })
+    .catch(function() {
+      document.getElementById("statusDot").className = "dot offline";
+      document.getElementById("statusText").textContent = "后端连接失败";
+    });
+
+  fetch(API_BASE + "/health", { headers: getHeaders() })
+    .then(r => r.json())
+    .then(d => updateStats(null, d.record_count));
+}
+
+// ===== 查询 =====
+function search(page) {
+  currentPage = page || 1;
+  var params = new URLSearchParams();
+  var account = document.getElementById("filterAccount").value.trim();
+  var series = document.getElementById("filterSeries").value.trim();
+  var dateFrom = document.getElementById("filterDateFrom").value;
+  var dateTo = document.getElementById("filterDateTo").value;
+
+  if (account) params.set("account", account);
+  if (series) params.set("series", series);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  params.set("limit", PAGE_SIZE);
+  params.set("offset", (currentPage - 1) * PAGE_SIZE);
+
+  currentFilters = { account, series, dateFrom, dateTo };
+
+  fetch(API_BASE + "/api/records?" + params.toString(), { headers: getHeaders() })
+    .then(r => r.json())
+    .then(d => renderTable(d))
+    .catch(e => {
+      document.getElementById("tableWrap").innerHTML = '<p class="empty">⚠ 加载失败，请检查后端是否运行</p>';
+    });
+}
+
+function renderTable(data) {
+  var total = data.total;
+  var records = data.records;
+  updateStats(total);
+
+  if (!records || records.length === 0) {
+    document.getElementById("tableWrap").innerHTML = '<p class="empty">📭 没有匹配的记录</p>';
+    return;
+  }
+
+  var html = '<table><thead><tr>' +
+    '<th>#</th><th>账号</th><th>剧名</th><th>集数</th><th>采集时间</th>' +
+    '</tr></thead><tbody>';
+
+  var startIdx = (currentPage - 1) * PAGE_SIZE + 1;
+  records.forEach(function(r, i) {
+    html += '<tr>' +
+      '<td>' + (startIdx + i) + '</td>' +
+      '<td><span class="account-tag">' + esc(r.account_name_raw) + '</span></td>' +
+      '<td>' + esc(r.series_name_raw) + '</td>' +
+      '<td>' + esc(r.episodes_raw || "-") + '</td>' +
+      '<td>' + formatTime(r.collected_at) + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+
+  // 分页
+  var totalPages = Math.ceil(total / PAGE_SIZE);
+  if (totalPages > 1) {
+    html += '<div class="pagination">';
+    html += '<button ' + (currentPage <= 1 ? "disabled" : "") + ' onclick="search(' + (currentPage - 1) + ')">‹ 上一页</button>';
+    for (var p = 1; p <= Math.min(totalPages, 10); p++) {
+      html += '<button class="' + (p === currentPage ? "active" : "") + '" onclick="search(' + p + ')">' + p + '</button>';
+    }
+    if (totalPages > 10) html += '<span>...</span>';
+    html += '<button ' + (currentPage >= totalPages ? "disabled" : "") + ' onclick="search(' + (currentPage + 1) + ')">下一页 ›</button>';
+    html += '<span style="margin-left:12px;color:var(--text-secondary)">共 ' + total + ' 条</span>';
+    html += '</div>';
+  }
+
+  document.getElementById("tableWrap").innerHTML = html;
+}
+
+// ===== 导出 =====
+function exportCsv() {
+  var params = new URLSearchParams();
+  if (currentFilters.account) params.set("account", currentFilters.account);
+  if (currentFilters.series) params.set("series", currentFilters.series);
+  if (currentFilters.dateFrom) params.set("date_from", currentFilters.dateFrom);
+  if (currentFilters.dateTo) params.set("date_to", currentFilters.dateTo);
+
+  var url = API_BASE + "/api/export.csv";
+  if (params.toString()) url += "?" + params.toString();
+
+  // 用 fetch 下载
+  fetch(url, { headers: getHeaders() })
+    .then(r => r.blob())
+    .then(blob => {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "export_" + new Date().toISOString().slice(0,10) + ".csv";
+      a.click();
+    });
+}
+
+function resetFilters() {
+  document.getElementById("filterAccount").value = "";
+  document.getElementById("filterSeries").value = "";
+  document.getElementById("filterDateFrom").value = "";
+  document.getElementById("filterDateTo").value = "";
+  currentFilters = {};
+  search(1);
+}
+
+function formatTime(t) {
+  if (!t) return "-";
+  return t.replace("T", " ").substring(0, 19);
+}
+
+// ===== OCR 别名管理 =====
+function toggleAliasPanel() {
+  var panel = document.getElementById("aliasPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+  if (panel.style.display !== "none") loadAliases();
+}
+
+function addAlias() {
+  var raw = document.getElementById("aliasRaw").value.trim();
+  var correct = document.getElementById("aliasCorrect").value.trim();
+  var type = document.getElementById("aliasType").value;
+  if (!raw || !correct) { alert("请填写完整"); return; }
+
+  fetch(API_BASE + "/api/ocr-aliases", {
+    method: "POST",
+    headers: Object.assign({ "Content-Type": "application/json" }, getHeaders()),
+    body: JSON.stringify({ raw_text: raw, correct_text: correct, field_type: type })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { document.getElementById("aliasRaw").value = ""; document.getElementById("aliasCorrect").value = ""; loadAliases(); }
+    else alert("添加失败: " + (d.error || "unknown"));
+  });
+}
+
+function deleteAlias(id) {
+  if (!confirm("确认删除？")) return;
+  fetch(API_BASE + "/api/ocr-aliases/" + id, { method: "DELETE", headers: getHeaders() })
+    .then(r => r.json()).then(d => { if (d.ok) loadAliases(); });
+}
+
+function loadAliases() {
+  fetch(API_BASE + "/api/ocr-aliases", { headers: getHeaders() })
+    .then(r => r.json())
+    .then(d => {
+      var html = "<table style='width:100%;margin-top:8px;'><thead><tr><th>OCR错误</th><th>修正</th><th>类型</th><th>操作</th></tr></thead><tbody>";
+      (d.aliases || []).forEach(function(a) {
+        html += "<tr><td>" + esc(a.raw_text) + "</td><td>" + esc(a.correct_text) + "</td><td>" + a.field_type + "</td><td><button onclick='deleteAlias(" + a.id + ")' style='color:var(--danger);border:none;background:none;cursor:pointer;'>删除</button></td></tr>";
+      });
+      html += "</tbody></table>";
+      if (!d.aliases || d.aliases.length === 0) html = "<p style='color:var(--text-secondary);text-align:center;padding:12px;'>暂无别名映射</p>";
+      document.getElementById("aliasList").innerHTML = html;
+    });
+}
+
+// 在 stats 行增加 OCR 管理按钮
+function updateStats(total, dbCount) {
+  var tc = total !== null ? total : (dbCount || 0);
+  var html =
+    '<div class="stat-card"><div class="label">总记录数</div><div class="value">' + tc + '</div></div>' +
+    '<div class="stat-card"><div class="label">当前页</div><div class="value">' + currentPage + '</div></div>' +
+    '<div class="stat-card"><div class="label">每页显示</div><div class="value">' + PAGE_SIZE + '</div></div>' +
+    '<div class="stat-card"><div class="label">OCR别名</div><div class="value" style="font-size:.9rem;cursor:pointer;color:var(--primary)" onclick="toggleAliasPanel()">🔧 管理</div></div>';
+  document.getElementById("statsRow").innerHTML = html;
+}
+
+function esc(s) {
+  if (!s) return "-";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+</script>
+</body>
+</html>

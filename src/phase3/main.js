@@ -7,23 +7,33 @@ var accountParser = require("./account_parser.js");
 var seriesParser = require("./series_parser.js");
 var csvStore = require("./csv_store.js");
 var actions = require("./actions.js");
+var reporter = require("./reporter.js");
 var textUtils = require("./text_utils.js");
 var time = require("./time.js");
 
-function collectSeries() {
+function collectSeries(initialPage) {
     var allNames = [];
     var noNewCount = 0;
 
     sleep(config.pageDelay);
     for (var scroll = 0; scroll < config.maxSeriesScrolls; scroll++) {
-        var pageImg = screen.ensureCapture();
-        if (!pageImg) {
-            warn("剧集页截图失败，结束当前账号采集");
-            break;
-        }
+        var pageNames;
+        if (scroll === 0 && initialPage && initialPage.ocrResult) {
+            pageNames = seriesParser.extractCompleteCardTitles(
+                initialPage.ocrResult.items || [],
+                initialPage.height || device.height
+            );
+            log("复用已在剧集页截图读取第一屏");
+        } else {
+            var pageImg = screen.ensureCapture();
+            if (!pageImg) {
+                warn("剧集页截图失败，结束当前账号采集");
+                break;
+            }
 
-        var pageNames = seriesParser.readSeriesNames(pageImg, ocr);
-        pageImg.recycle();
+            pageNames = seriesParser.readSeriesNames(pageImg, ocr);
+            pageImg.recycle();
+        }
 
         var beforeCount = allNames.length;
         allNames = seriesParser.mergeAndDedup(allNames, pageNames);
@@ -54,11 +64,18 @@ function collectSeries() {
     return allNames.slice(0, config.maxSeries);
 }
 
-function markNewSeries(existingRecords, outputRecords, accountName, seriesNames) {
+function markNewSeries(existingRecords, outputRecords, observedRecords, accountName, seriesNames) {
     var appended = 0;
     var newRows = [];
 
     seriesNames.forEach(function (seriesName) {
+        var collectTime = time.beijingTime();
+        observedRecords.push({
+            account: accountName,
+            series: seriesName,
+            collectTime: collectTime
+        });
+
         if (csvStore.csvExists(existingRecords, accountName, seriesName)) {
             log("CSV已存在，跳过：" + accountName + " / " + seriesName);
             return;
@@ -67,7 +84,7 @@ function markNewSeries(existingRecords, outputRecords, accountName, seriesNames)
         var row = {
             account: accountName,
             series: seriesName,
-            collectTime: time.beijingTime()
+            collectTime: collectTime
         };
         outputRecords.push(row);
         newRows.push(row);
@@ -84,7 +101,7 @@ function markNewSeries(existingRecords, outputRecords, accountName, seriesNames)
     return appended;
 }
 
-function collectAccount(account, existingRecords, outputRecords) {
+function collectAccount(account, existingRecords, outputRecords, observedRecords) {
     log("进入账号：" + account.label);
 
     var clickResult = actions.clickAccount(account, ocr);
@@ -93,25 +110,42 @@ function collectAccount(account, existingRecords, outputRecords) {
         return false;
     }
 
-    var tabOk = actions.clickSeriesTab(clickResult.img, ocr);
+    var profileAccountName = accountParser.extractProfileAccountName(
+        clickResult.ocrResult,
+        clickResult.img.getHeight(),
+        account.label
+    );
+    if (profileAccountName && profileAccountName !== account.label) {
+        log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
+    }
+
+    var tabResult = actions.clickSeriesTab(clickResult.img, ocr);
     clickResult.img.recycle();
-    if (!tabOk) {
+    if (!tabResult.success) {
         warn("未找到剧集Tab，跳过：" + account.label);
         screen.goBack();
         sleep(config.pageDelay);
         return false;
     }
 
-    var seriesNames = collectSeries();
-    var appended = markNewSeries(existingRecords, outputRecords, account.label, seriesNames);
-    log("账号完成：" + account.label + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
+    var initialSeriesPage = null;
+    if (tabResult.alreadySeriesPage) {
+        initialSeriesPage = {
+            ocrResult: tabResult.firstPageOcr,
+            height: tabResult.firstPageHeight
+        };
+    }
+    var seriesNames = collectSeries(initialSeriesPage);
+    var accountNameForCsv = profileAccountName || account.label;
+    var appended = markNewSeries(existingRecords, outputRecords, observedRecords, accountNameForCsv, seriesNames);
+    log("账号完成：" + accountNameForCsv + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
 
     screen.goBack();
     sleep(config.pageDelay);
     return true;
 }
 
-function collectAccountsOnce(existingRecords, outputRecords) {
+function collectAccountsOnce(existingRecords, outputRecords, observedRecords) {
     var processedAccounts = {};
     var processedAccountLabels = [];
     var lastAccountLabel = "";
@@ -121,14 +155,23 @@ function collectAccountsOnce(existingRecords, outputRecords) {
     var emptyPages = 0;
     var skippedTopOnce = false;
     var targetAccountCount = 0;
+    var endedOnFollowingList = true;
+    var endReason = "unknown";
 
     for (var step = 0; step < config.maxAccountSteps; step++) {
         if (targetAccountCount > 0 && scannedCount >= targetAccountCount) {
             log("已遍历关注账号数 " + scannedCount + "/" + targetAccountCount + "，结束");
+            endReason = "scanned_all_accounts";
             break;
         }
 
         var img = screen.ensureCapture();
+        if (!img) {
+            warn("关注列表截图连续失败，结束本轮遍历");
+            endedOnFollowingList = false;
+            endReason = "capture_failed";
+            break;
+        }
         var ocrResult = ocr.ocrScreen(img, null, "account");
         if (targetAccountCount === 0) {
             var followTotal = accountParser.extractFollowTotal(ocrResult);
@@ -171,6 +214,7 @@ function collectAccountsOnce(existingRecords, outputRecords) {
             emptyPages++;
             if (emptyPages >= config.maxEmptyAccountPages) {
                 log("连续没有新账号，结束关注列表遍历");
+                endReason = "no_new_accounts";
                 break;
             }
             screen.scrollDownSmall();
@@ -183,7 +227,7 @@ function collectAccountsOnce(existingRecords, outputRecords) {
         lastAccountLabel = targetAccount.label;
         scannedCount++;
 
-        if (collectAccount(targetAccount, existingRecords, outputRecords)) {
+        if (collectAccount(targetAccount, existingRecords, outputRecords, observedRecords)) {
             successCount++;
         } else {
             failCount++;
@@ -193,7 +237,9 @@ function collectAccountsOnce(existingRecords, outputRecords) {
     return {
         scannedCount: scannedCount,
         successCount: successCount,
-        failCount: failCount
+        failCount: failCount,
+        endedOnFollowingList: endedOnFollowingList,
+        endReason: endReason
     };
 }
 
@@ -241,6 +287,73 @@ function sameAccountLabel(a, b) {
     return textUtils.charOverlapRatio(ak, bk) >= 0.92;
 }
 
+function isFollowingListPage(ocrResult) {
+    var items = (ocrResult && ocrResult.items) || [];
+    var joined = items.map(function (item) {
+        return textUtils.normalizeRecordKey(item.label || "");
+    }).join(" ");
+    if (joined.indexOf("我的关注") >= 0) return true;
+    if (joined.indexOf("关注") >= 0 && joined.indexOf("已关注") < 0 && joined.indexOf("私信") < 0) return true;
+    return accountParser.extractFollowTotal(ocrResult) > 0;
+}
+
+function captureAndCheckFollowingList() {
+    var img = screen.ensureCapture();
+    if (!img) return null;
+    var ocrResult = ocr.ocrScreen(img, null, "account");
+    var ok = isFollowingListPage(ocrResult);
+    img.recycle();
+    return ok;
+}
+
+function returnToFollowingList() {
+    for (var i = 0; i < config.finishBackMaxSteps; i++) {
+        var check = captureAndCheckFollowingList();
+        if (check === true) {
+            log("收尾: 已回到关注列表");
+            return true;
+        }
+        if (check === null) {
+            warn("收尾: 截图失败，无法确认当前位置，跳过返回操作");
+            return false;
+        }
+        log("收尾: 当前不在关注列表，执行返回 " + (i + 1) + "/" + config.finishBackMaxSteps);
+        screen.goBack();
+        sleep(config.pageDelay);
+    }
+    var finalCheck = captureAndCheckFollowingList();
+    if (finalCheck === true) {
+        log("收尾: 已回到关注列表");
+        return true;
+    }
+    if (finalCheck === null) {
+        warn("收尾: 截图失败，无法确认当前位置");
+        return false;
+    }
+    warn("收尾: 未能确认回到关注列表");
+    return false;
+}
+
+function scrollFollowingListToTop() {
+    log("收尾: 尝试回到关注列表顶部");
+    for (var i = 0; i < config.finishScrollTopSwipes; i++) {
+        screen.scrollToTopOnce();
+        sleep(650);
+    }
+    log("收尾: 已执行顶部回滚手势 " + config.finishScrollTopSwipes + " 次");
+}
+
+function finishRun(summary) {
+    if (summary && summary.endedOnFollowingList) {
+        log("收尾: 主流程结束时已在关注列表，原因=" + summary.endReason);
+        scrollFollowingListToTop();
+        return;
+    }
+    if (returnToFollowingList()) {
+        scrollFollowingListToTop();
+    }
+}
+
 function main() {
     console.show();
     log("启动关注账号剧集采集");
@@ -252,11 +365,26 @@ function main() {
     log("已加载历史记录 " + existingRecords.length + " 条");
 
     var outputRecords = [];
-    var summary = collectAccountsOnce(existingRecords, outputRecords);
+    var observedRecords = [];
+    var summary = collectAccountsOnce(existingRecords, outputRecords, observedRecords);
+
+    finishRun(summary);
 
     if (outputRecords.length === 0) {
         log("没有新增剧集记录");
+    } else {
+        log("本地新增剧集记录 " + outputRecords.length + " 条");
     }
+
+    if (observedRecords.length > 0) {
+        // 上报本轮识别到的全部记录，由后端统一去重、入库和通知。
+        reporter.reportToBackend(observedRecords, summary);
+    } else {
+        log("本轮没有可上报的剧集识别结果");
+    }
+
+    // 发送心跳
+    reporter.sendHeartbeat("idle");
 
     log("采集结束：遍历账号 " + summary.scannedCount
         + " 个，成功 " + summary.successCount
