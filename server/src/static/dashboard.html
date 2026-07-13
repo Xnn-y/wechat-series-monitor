@@ -137,6 +137,8 @@
     border-radius: 6px; padding: 4px 9px; cursor:pointer; font-size:.78rem;
   }
 
+  .scroll-panel { max-height: 360px; overflow-y: auto; }
+
   /* 分页 */
   .pagination {
     display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -659,11 +661,11 @@ function renderRunsPanel(runs, accounts) {
     html += '</tbody></table>';
   }
   if (accounts.length) {
-    html += '<h3 style="margin-top:14px;">今日账号新增</h3><table class="mini-table"><tbody>';
+    html += '<h3 style="margin-top:14px;">今日账号新增</h3><div class="scroll-panel"><table class="mini-table"><tbody>';
     accounts.forEach(function(a) {
       html += '<tr><td>' + esc(a.account) + '</td><td style="text-align:right;">' + a.count + '</td></tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
   }
   html += '</div>';
   return html;

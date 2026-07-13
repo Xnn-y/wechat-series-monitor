@@ -242,7 +242,7 @@ def get_summary():
                  AND collected_at < date('now', 'localtime', '+1 day')
                GROUP BY account_name_raw
                ORDER BY count DESC, account_name_raw ASC
-               LIMIT 8"""
+               LIMIT 50"""
         ).fetchall()
     finally:
         conn.close()
