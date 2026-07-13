@@ -180,7 +180,7 @@
 <div id="mainApp" style="display:none;">
 
   <div class="header">
-    <h1>📺 剧集采集监控后台</h1>
+    <h1>📺 剧集采集监控后台<span id="roleBadge" style="font-size:.7rem;margin-left:10px;padding:2px 8px;border-radius:4px;font-weight:400;"></span></h1>
     <div class="header-actions">
       <span class="status" id="statusBar">
         <span class="dot online" id="statusDot"></span>
@@ -258,19 +258,25 @@ let currentPage = 1;
 let currentFilters = {};
 let currentHighlightRunId = "";
 let latestRunId = "";
+let userRole = "";  // "admin" | "viewer"
 const PAGE_SIZE = 20;
 
 // ===== 登录 =====
 function doLogin() {
   var pwd = document.getElementById("passwordInput").value;
-  fetch(API_BASE + "/api/records?limit=1", {
+  // 先验证密码，再检测角色
+  fetch(API_BASE + "/api/auth-check", {
     headers: { [ADMIN_HEADER]: pwd }
   }).then(function(r) {
-    if (r.status === 401) {
+    return r.json();
+  }).then(function(d) {
+    if (!d.role) {
       document.getElementById("loginError").style.display = "block";
       return;
     }
+    userRole = d.role;
     sessionStorage.setItem("admin_pwd", pwd);
+    sessionStorage.setItem("user_role", d.role);
     document.getElementById("passwordInput").value = "";
     document.getElementById("loginOverlay").style.display = "none";
     document.getElementById("mainApp").style.display = "block";
@@ -280,11 +286,11 @@ function doLogin() {
 
 var savedPwd = sessionStorage.getItem("admin_pwd");
 if (savedPwd) {
-  // 验证已保存密码
-  fetch(API_BASE + "/api/records?limit=1", {
+  fetch(API_BASE + "/api/auth-check", {
     headers: { [ADMIN_HEADER]: savedPwd }
-  }).then(function(r) {
-    if (r.ok) {
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.role) {
+      userRole = d.role;
       document.getElementById("loginOverlay").style.display = "none";
       document.getElementById("mainApp").style.display = "block";
       init();
@@ -303,6 +309,16 @@ document.addEventListener("DOMContentLoaded", function() {
 
 // ===== 初始化 =====
 function init() {
+  // 设置角色标签
+  var badge = document.getElementById("roleBadge");
+  if (userRole === "admin") {
+    badge.textContent = "管理员";
+    badge.style.background = "#fef3c7"; badge.style.color = "#92400e";
+  } else {
+    badge.textContent = "查看者";
+    badge.style.background = "#e0e7ff"; badge.style.color = "#3730a3";
+  }
+
   setDefaultDateFilters();
   loadStats();
   search();
@@ -378,40 +394,48 @@ function renderTable(data) {
     return;
   }
 
-  var html = '<div style="padding:8px 14px;background:#fef3c7;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+  var isAdmin = (userRole === "admin");
+  var adminBar = isAdmin ? '<div style="padding:8px 14px;background:#fef3c7;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
     '<button class="btn-search" onclick="batchDelete()" id="batchDelBtn" disabled>🗑 批量删除</button>' +
     '<label style="font-size:.8rem;cursor:pointer;"><input type="checkbox" id="batchAddAlias"> 同时添加OCR别名</label>' +
     '<span style="font-size:.78rem;color:var(--text-secondary);margin-left:auto;" id="selectedCount">已选 0 条</span>' +
-    '</div>' +
+    '</div>' : '';
+
+  var html = adminBar +
     '<table><thead><tr>' +
-    '<th style="width:36px;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>' +
-    '<th>#</th><th>账号</th><th>剧名</th><th>集数</th><th>采集时间</th><th>操作</th>' +
+    (isAdmin ? '<th style="width:36px;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>' : '') +
+    '<th>#</th><th>账号</th><th>剧名</th><th>集数</th><th>采集时间</th>' +
+    (isAdmin ? '<th>操作</th>' : '') +
     '</tr></thead><tbody>';
 
   var startIdx = (currentPage - 1) * PAGE_SIZE + 1;
   records.forEach(function(r, i) {
     var rowClass = currentHighlightRunId && r.run_id === currentHighlightRunId ? ' class="highlight-run"' : '';
     var recId = r.id;
-    html += '<tr' + rowClass + ' id="row-' + recId + '">' +
-      '<td><input type="checkbox" class="row-check" value="' + recId + '" onchange="updateBatchState()"></td>' +
-      '<td>' + (startIdx + i) + '</td>' +
+    html += '<tr' + rowClass + ' id="row-' + recId + '">';
+    if (isAdmin) {
+      html += '<td><input type="checkbox" class="row-check" value="' + recId + '" onchange="updateBatchState()"></td>';
+    }
+    html += '<td>' + (startIdx + i) + '</td>' +
       '<td><span class="account-tag view-mode" id="acc-' + recId + '">' + esc(r.account_name_raw) + '</span>' +
-          '<input class="edit-mode" id="acc-inp-' + recId + '" value="' + escAttr(r.account_name_raw) + '" style="display:none;width:120px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' +
+          (isAdmin ? '<input class="edit-mode" id="acc-inp-' + recId + '" value="' + escAttr(r.account_name_raw) + '" style="display:none;width:120px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' : '') +
       '</td>' +
       '<td><span class="view-mode" id="ser-' + recId + '">' + esc(r.series_name_raw) + '</span>' +
-          '<input class="edit-mode" id="ser-inp-' + recId + '" value="' + escAttr(r.series_name_raw) + '" style="display:none;width:180px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' +
+          (isAdmin ? '<input class="edit-mode" id="ser-inp-' + recId + '" value="' + escAttr(r.series_name_raw) + '" style="display:none;width:180px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' : '') +
       '</td>' +
       '<td><span class="view-mode" id="epi-' + recId + '">' + esc(r.episodes_raw || "-") + '</span>' +
-          '<input class="edit-mode" id="epi-inp-' + recId + '" value="' + escAttr(r.episodes_raw || "") + '" style="display:none;width:60px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' +
+          (isAdmin ? '<input class="edit-mode" id="epi-inp-' + recId + '" value="' + escAttr(r.episodes_raw || "") + '" style="display:none;width:60px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' : '') +
       '</td>' +
-      '<td>' + formatTime(r.collected_at) + '</td>' +
-      '<td style="white-space:nowrap;">' +
+      '<td>' + formatTime(r.collected_at) + '</td>';
+    if (isAdmin) {
+      html += '<td style="white-space:nowrap;">' +
         '<button class="view-mode" onclick="startEdit(' + recId + ')" style="color:var(--primary);border:none;background:none;cursor:pointer;font-size:.8rem;">✏️</button>' +
         '<button class="edit-mode" onclick="saveEdit(' + recId + ')" style="display:none;color:var(--success);border:none;background:none;cursor:pointer;font-size:.8rem;font-weight:700;">✓</button>' +
         '<button class="edit-mode" onclick="cancelEdit(' + recId + ')" style="display:none;color:var(--text-secondary);border:none;background:none;cursor:pointer;font-size:.8rem;margin-left:4px;">✕</button>' +
         '<button onclick="deleteRecord(' + recId + ')" style="color:var(--danger);border:none;background:none;cursor:pointer;font-size:.8rem;margin-left:4px;">🗑</button>' +
-      '</td>' +
-      '</tr>';
+        '</td>';
+    }
+    html += '</tr>';
   });
   html += '</tbody></table>';
 
@@ -543,7 +567,7 @@ function renderSummary(data) {
     '<div class="stat-card"><div class="label">今日新增</div><div class="value">' + data.today_records + '</div><div class="hint">默认筛选今天到明天</div></div>' +
     '<div class="stat-card"><div class="label">总记录数</div><div class="value">' + data.total_records + '</div><div class="hint">已去重入库</div></div>' +
     '<div class="' + latestCardClass + '"' + latestClick + '><div class="label">最近一轮新增</div><div class="value">' + (latest.inserted || 0) + '</div><div class="hint">' + esc(latest.device_name || "暂无采集") + ' · 点击高亮</div></div>' +
-    '<div class="stat-card clickable" onclick="toggleAliasPanel()"><div class="label">设备状态</div><div class="value" style="font-size:1.15rem;">' + deviceText + '</div><div class="hint">点击下方管理 OCR 别名</div></div>';
+    '<div class="stat-card' + (userRole === 'admin' ? ' clickable" onclick="toggleAliasPanel()"' : '"') + '><div class="label">设备状态</div><div class="value" style="font-size:1.15rem;">' + deviceText + '</div><div class="hint">' + (userRole === 'admin' ? '点击管理 OCR 别名' : '查看模式') + '</div></div>';
   document.getElementById("statsRow").innerHTML = html;
 
   document.getElementById("overviewGrid").innerHTML =

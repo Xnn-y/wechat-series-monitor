@@ -20,6 +20,7 @@ class Settings:
     COLLECTOR_TOKEN: str = os.getenv("COLLECTOR_TOKEN", "dev_token")
     WECOM_WEBHOOK_URL: str = os.getenv("WECOM_WEBHOOK_URL", "")
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
+    VIEWER_PASSWORD: str = os.getenv("VIEWER_PASSWORD", "viewer123")
     APP_ENV: str = os.getenv("APP_ENV", "local")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///server/data/collector.dev.db")
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "")

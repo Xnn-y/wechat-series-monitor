@@ -26,16 +26,29 @@ def require_token(f):
     return wrapper
 
 
-def require_admin(f):
-    """管理员密码校验：配置了 ADMIN_PASSWORD 时必须携带 X-Admin-Password。"""
+def require_viewer(f):
+    """查看者权限：VIEWER_PASSWORD 或 ADMIN_PASSWORD 均可。"""
     @wraps(f)
     def wrapper(*args, **kwargs):
+        req_pwd = request.headers.get("X-Admin-Password", "")
         admin_pwd = (settings.ADMIN_PASSWORD or "").strip()
-        if admin_pwd:
-            req_pwd = request.headers.get("X-Admin-Password", "")
-            if req_pwd != admin_pwd:
-                return jsonify({"ok": False, "error": "admin password required"}), 401
-        return f(*args, **kwargs)
+        viewer_pwd = (settings.VIEWER_PASSWORD or "").strip()
+        # 两种密码都接受
+        if req_pwd == admin_pwd or (viewer_pwd and req_pwd == viewer_pwd):
+            return f(*args, **kwargs)
+        return jsonify({"ok": False, "error": "password required"}), 401
+    return wrapper
+
+
+def require_admin(f):
+    """管理员权限：仅 ADMIN_PASSWORD。"""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        req_pwd = request.headers.get("X-Admin-Password", "")
+        admin_pwd = (settings.ADMIN_PASSWORD or "").strip()
+        if req_pwd and req_pwd == admin_pwd:
+            return f(*args, **kwargs)
+        return jsonify({"ok": False, "error": "admin password required"}), 401
     return wrapper
 
 
@@ -91,7 +104,7 @@ def collect():
 # 支持参数: account, series, date_from, date_to, limit, offset
 # ============================================================
 @api.route("/api/records", methods=["GET"])
-@require_admin
+@require_viewer
 def get_records():
     run_id = request.args.get("run_id", "").strip()
     account = request.args.get("account", "").strip()
@@ -157,7 +170,7 @@ def get_records():
 # GET /api/runs - 查询采集轮次
 # ============================================================
 @api.route("/api/runs", methods=["GET"])
-@require_admin
+@require_viewer
 def get_runs():
     try:
         limit = min(int(request.args.get("limit", "20")), 100)
@@ -185,7 +198,7 @@ def get_runs():
 # GET /api/summary - 团队后台总览
 # ============================================================
 @api.route("/api/summary", methods=["GET"])
-@require_admin
+@require_viewer
 def get_summary():
     conn = get_connection()
     try:
@@ -268,7 +281,7 @@ def get_summary():
 # GET /api/export.csv - CSV 导出（支持筛选）
 # ============================================================
 @api.route("/api/export.csv", methods=["GET"])
-@require_admin
+@require_viewer
 def export_csv():
     account = request.args.get("account", "").strip()
     series = request.args.get("series", "").strip()
@@ -340,7 +353,7 @@ def heartbeat():
 # GET /api/health-check - 运行健康检查，返回告警列表
 # ============================================================
 @api.route("/api/health-check", methods=["GET"])
-@require_admin
+@require_viewer
 def health_check():
     result = run_health_check()
     return jsonify(result)
@@ -350,7 +363,7 @@ def health_check():
 # GET /api/ocr-aliases - 查询 OCR 别名列表
 # ============================================================
 @api.route("/api/ocr-aliases", methods=["GET"])
-@require_admin
+@require_viewer
 def get_ocr_aliases():
     conn = get_connection()
     try:
@@ -494,6 +507,24 @@ def batch_delete_records():
         conn.close()
 
     return jsonify({"ok": True, "deleted": deleted})
+
+
+# ============================================================
+# GET /api/auth-check - 检测当前密码对应的角色
+# ============================================================
+@api.route("/api/auth-check", methods=["GET"])
+def auth_check():
+    req_pwd = request.headers.get("X-Admin-Password", "")
+    admin_pwd = (settings.ADMIN_PASSWORD or "").strip()
+    viewer_pwd = (settings.VIEWER_PASSWORD or "").strip()
+
+    role = None
+    if req_pwd and req_pwd == admin_pwd:
+        role = "admin"
+    elif viewer_pwd and req_pwd == viewer_pwd:
+        role = "viewer"
+
+    return jsonify({"ok": True, "role": role})
 
 
 # ============================================================
