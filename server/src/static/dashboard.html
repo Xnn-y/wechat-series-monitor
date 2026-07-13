@@ -378,19 +378,39 @@ function renderTable(data) {
     return;
   }
 
-  var html = '<table><thead><tr>' +
-    '<th>#</th><th>账号</th><th>剧名</th><th>集数</th><th>采集时间</th>' +
+  var html = '<div style="padding:8px 14px;background:#fef3c7;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+    '<button class="btn-search" onclick="batchDelete()" id="batchDelBtn" disabled>🗑 批量删除</button>' +
+    '<label style="font-size:.8rem;cursor:pointer;"><input type="checkbox" id="batchAddAlias"> 同时添加OCR别名</label>' +
+    '<span style="font-size:.78rem;color:var(--text-secondary);margin-left:auto;" id="selectedCount">已选 0 条</span>' +
+    '</div>' +
+    '<table><thead><tr>' +
+    '<th style="width:36px;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>' +
+    '<th>#</th><th>账号</th><th>剧名</th><th>集数</th><th>采集时间</th><th>操作</th>' +
     '</tr></thead><tbody>';
 
   var startIdx = (currentPage - 1) * PAGE_SIZE + 1;
   records.forEach(function(r, i) {
     var rowClass = currentHighlightRunId && r.run_id === currentHighlightRunId ? ' class="highlight-run"' : '';
-    html += '<tr' + rowClass + '>' +
+    var recId = r.id;
+    html += '<tr' + rowClass + ' id="row-' + recId + '">' +
+      '<td><input type="checkbox" class="row-check" value="' + recId + '" onchange="updateBatchState()"></td>' +
       '<td>' + (startIdx + i) + '</td>' +
-      '<td><span class="account-tag">' + esc(r.account_name_raw) + '</span></td>' +
-      '<td>' + esc(r.series_name_raw) + '</td>' +
-      '<td>' + esc(r.episodes_raw || "-") + '</td>' +
+      '<td><span class="account-tag view-mode" id="acc-' + recId + '">' + esc(r.account_name_raw) + '</span>' +
+          '<input class="edit-mode" id="acc-inp-' + recId + '" value="' + escAttr(r.account_name_raw) + '" style="display:none;width:120px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' +
+      '</td>' +
+      '<td><span class="view-mode" id="ser-' + recId + '">' + esc(r.series_name_raw) + '</span>' +
+          '<input class="edit-mode" id="ser-inp-' + recId + '" value="' + escAttr(r.series_name_raw) + '" style="display:none;width:180px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' +
+      '</td>' +
+      '<td><span class="view-mode" id="epi-' + recId + '">' + esc(r.episodes_raw || "-") + '</span>' +
+          '<input class="edit-mode" id="epi-inp-' + recId + '" value="' + escAttr(r.episodes_raw || "") + '" style="display:none;width:60px;padding:3px 6px;border:1px solid var(--primary);border-radius:4px;font-size:.85rem;">' +
+      '</td>' +
       '<td>' + formatTime(r.collected_at) + '</td>' +
+      '<td style="white-space:nowrap;">' +
+        '<button class="view-mode" onclick="startEdit(' + recId + ')" style="color:var(--primary);border:none;background:none;cursor:pointer;font-size:.8rem;">✏️</button>' +
+        '<button class="edit-mode" onclick="saveEdit(' + recId + ')" style="display:none;color:var(--success);border:none;background:none;cursor:pointer;font-size:.8rem;font-weight:700;">✓</button>' +
+        '<button class="edit-mode" onclick="cancelEdit(' + recId + ')" style="display:none;color:var(--text-secondary);border:none;background:none;cursor:pointer;font-size:.8rem;margin-left:4px;">✕</button>' +
+        '<button onclick="deleteRecord(' + recId + ')" style="color:var(--danger);border:none;background:none;cursor:pointer;font-size:.8rem;margin-left:4px;">🗑</button>' +
+      '</td>' +
       '</tr>';
   });
   html += '</tbody></table>';
@@ -589,9 +609,100 @@ function formatMinutesAgo(minutes) {
   return Math.floor(hours / 24) + " 天前";
 }
 
+// ===== 数据管理：编辑、删除、批量操作 =====
+
+function startEdit(id) {
+  document.querySelectorAll("#row-" + id + " .view-mode").forEach(function(el) { el.style.display = "none"; });
+  document.querySelectorAll("#row-" + id + " .edit-mode").forEach(function(el) { el.style.display = ""; });
+}
+
+function cancelEdit(id) {
+  // 还原输入框
+  document.getElementById("acc-inp-" + id).value = document.getElementById("acc-" + id).textContent;
+  document.getElementById("ser-inp-" + id).value = document.getElementById("ser-" + id).textContent;
+  document.getElementById("epi-inp-" + id).value = document.getElementById("epi-" + id).textContent === "-" ? "" : document.getElementById("epi-" + id).textContent;
+  // 切换显示模式
+  document.querySelectorAll("#row-" + id + " .view-mode").forEach(function(el) { el.style.display = ""; });
+  document.querySelectorAll("#row-" + id + " .edit-mode").forEach(function(el) { el.style.display = "none"; });
+}
+
+function saveEdit(id) {
+  var acc = document.getElementById("acc-inp-" + id).value.trim();
+  var ser = document.getElementById("ser-inp-" + id).value.trim();
+  var epi = document.getElementById("epi-inp-" + id).value.trim();
+  if (!acc || !ser) { alert("账号名和剧名不能为空"); return; }
+
+  fetch(API_BASE + "/api/records/" + id, {
+    method: "PUT",
+    headers: Object.assign({ "Content-Type": "application/json" }, getHeaders()),
+    body: JSON.stringify({ account_name_raw: acc, series_name_raw: ser, episodes_raw: epi })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      document.getElementById("acc-" + id).textContent = acc;
+      document.getElementById("ser-" + id).textContent = ser;
+      document.getElementById("epi-" + id).textContent = epi || "-";
+      cancelEdit(id);
+    } else {
+      alert("修改失败: " + (d.error || ""));
+    }
+  });
+}
+
+function deleteRecord(id) {
+  if (!confirm("确认删除这条记录？")) return;
+  fetch(API_BASE + "/api/records/" + id, { method: "DELETE", headers: getHeaders() })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      if (d.ok) { search(currentPage); }
+      else { alert("删除失败"); }
+    });
+}
+
+function toggleSelectAll() {
+  var checked = document.getElementById("selectAll").checked;
+  document.querySelectorAll(".row-check").forEach(function(cb) { cb.checked = checked; });
+  updateBatchState();
+}
+
+function updateBatchState() {
+  var cbs = document.querySelectorAll(".row-check:checked");
+  var count = cbs.length;
+  document.getElementById("selectedCount").textContent = "已选 " + count + " 条";
+  document.getElementById("batchDelBtn").disabled = count === 0;
+}
+
+function batchDelete() {
+  var cbs = document.querySelectorAll(".row-check:checked");
+  if (cbs.length === 0) return;
+  if (!confirm("确认删除选中的 " + cbs.length + " 条记录？此操作不可撤销。")) return;
+
+  var ids = [];
+  cbs.forEach(function(cb) { ids.push(parseInt(cb.value)); });
+  var addAlias = document.getElementById("batchAddAlias").checked;
+
+  fetch(API_BASE + "/api/records/batch-delete", {
+    method: "POST",
+    headers: Object.assign({ "Content-Type": "application/json" }, getHeaders()),
+    body: JSON.stringify({ ids: ids, add_alias: addAlias, alias_type: "account" })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      alert("已删除 " + (d.deleted || ids.length) + " 条");
+      document.getElementById("selectAll").checked = false;
+      updateBatchState();
+      search(currentPage);
+    } else {
+      alert("删除失败: " + (d.error || ""));
+    }
+  });
+}
+
 function esc(s) {
   if (!s) return "-";
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function escAttr(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
 </script>

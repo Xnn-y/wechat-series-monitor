@@ -410,6 +410,93 @@ def delete_ocr_alias(alias_id):
 
 
 # ============================================================
+# PUT /api/records/<int:record_id> - 修改记录
+# ============================================================
+@api.route("/api/records/<int:record_id>", methods=["PUT"])
+@require_admin
+def update_record(record_id):
+    payload = request.get_json(silent=True) or {}
+    account_raw = (payload.get("account_name_raw") or "").strip()
+    series_raw = (payload.get("series_name_raw") or "").strip()
+    episodes = (payload.get("episodes_raw") or "").strip()
+
+    if not account_raw or not series_raw:
+        return jsonify({"ok": False, "error": "账号名和剧名不能为空"}), 400
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE series_records
+               SET account_name_raw = ?, series_name_raw = ?, episodes_raw = ?,
+                   account_name_normalized = ?, series_name_normalized = ?
+               WHERE id = ?""",
+            (account_raw, series_raw, episodes,
+             account_raw.strip().lower(), series_raw.strip().lower(),
+             record_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# DELETE /api/records/<int:record_id> - 删除单条记录
+# ============================================================
+@api.route("/api/records/<int:record_id>", methods=["DELETE"])
+@require_admin
+def delete_record(record_id):
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM series_records WHERE id = ?", (record_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# POST /api/records/batch-delete - 批量删除
+# Body: {"ids": [1, 2, 3], "add_alias": true, "alias_type": "account"}
+# ============================================================
+@api.route("/api/records/batch-delete", methods=["POST"])
+@require_admin
+def batch_delete_records():
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids", [])
+    add_alias = payload.get("add_alias", False)
+
+    if not ids or not isinstance(ids, list):
+        return jsonify({"ok": False, "error": "ids 不能为空"}), 400
+
+    conn = get_connection()
+    try:
+        # 如需同时创建 OCR 别名
+        if add_alias:
+            alias_type = payload.get("alias_type", "account")
+            rows = conn.execute(
+                f"SELECT id, account_name_raw, series_name_raw FROM series_records WHERE id IN ({','.join('?'*len(ids))})",
+                ids,
+            ).fetchall()
+            for r in rows:
+                raw = r["account_name_raw"] if alias_type == "account" else r["series_name_raw"]
+                conn.execute(
+                    "INSERT OR IGNORE INTO ocr_aliases (raw_text, correct_text, field_type, created_by) VALUES (?, ?, ?, 'batch')",
+                    (raw, raw, alias_type),
+                )
+
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(f"DELETE FROM series_records WHERE id IN ({placeholders})", ids)
+        conn.commit()
+        deleted = conn.total_changes
+    finally:
+        conn.close()
+
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+# ============================================================
 # GET /dashboard - 团队查看后台页面
 # ============================================================
 @api.route("/dashboard", methods=["GET"])
