@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0server"
 echo ================================
 echo   剧集采集后端服务

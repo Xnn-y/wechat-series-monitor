@@ -1,36 +1,11 @@
+/**
+ * csv_store.js - CSV 追加写入（纯备份，不参与去重逻辑）
+ *
+ * 去重完全由后端 SQLite 唯一索引负责。
+ * 本地 CSV 只做追加式备份记录。
+ */
 var config = require("./config.js");
-var text = require("./text_utils.js");
 var time = require("./time.js");
-
-function readCsv() {
-    var records = [];
-    records.__index = {};
-
-    try {
-        readCustomerCsv(records);
-        readIndex(records);
-    } catch (e) {
-        console.log("  [警告] 读取CSV或索引失败: " + e);
-    }
-    return records;
-}
-
-function csvExists(records, account, series) {
-    var key = recordKey(account, series);
-    if (!key) return true;
-    if (records.__index && records.__index[key]) return true;
-
-    for (var i = 0; i < records.length; i++) {
-        if (recordKey(records[i].account, records[i].series) === key) return true;
-        if (isLikelyDuplicateRecord(records[i], account, series)) {
-            console.log("  [去重] 疑似OCR差异重复，跳过: "
-                + records[i].account + " / " + records[i].series
-                + " ~= " + account + " / " + series);
-            return true;
-        }
-    }
-    return false;
-}
 
 function writeCsv(results) {
     appendCsv(results);
@@ -62,33 +37,6 @@ function appendCsv(results) {
     }
 }
 
-function saveIndex(records) {
-    if (!ensureDataDir()) return;
-    var index = (records && records.__index) || {};
-    var payload = {
-        version: 1,
-        updatedAt: time.beijingTime(),
-        records: index
-    };
-    try {
-        files.write(config.indexFile, JSON.stringify(payload, null, 2));
-    } catch (e) {
-        console.log("  [警告] 写入去重索引失败: " + e);
-    }
-}
-
-function addRecord(records, row) {
-    if (!records.__index) records.__index = {};
-    var key = recordKey(row.account, row.series);
-    if (!key) return;
-    records.__index[key] = true;
-    records.push({
-        account: row.account,
-        series: row.series,
-        collectTime: row.collectTime || time.beijingTime()
-    });
-}
-
 function ensureDataDir() {
     try {
         var dir = new java.io.File(config.csvDir);
@@ -107,100 +55,6 @@ function ensureDataDir() {
     }
 }
 
-function readCustomerCsv(records) {
-    if (!files.exists(config.csvFile)) return;
-
-    var content = files.read(config.csvFile);
-    var lines = content.split(/\r?\n/);
-    if (lines.length === 0) return;
-
-    var headers = parseCsvLine(lines[0]);
-    var accountIndex = findHeader(headers, ["账号名称", "account"]);
-    var seriesIndex = findHeader(headers, ["剧集名称", "series_name", "series"]);
-    if (accountIndex < 0) accountIndex = 0;
-    if (seriesIndex < 0) seriesIndex = 1;
-
-    for (var i = 1; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (!line) continue;
-        var cols = parseCsvLine(line);
-        if (cols.length <= Math.max(accountIndex, seriesIndex)) continue;
-        addRecord(records, {
-            account: cols[accountIndex],
-            series: cols[seriesIndex],
-            collectTime: cols[2] || ""
-        });
-    }
-}
-
-function readIndex(records) {
-    if (!files.exists(config.indexFile)) return;
-    var payload = JSON.parse(files.read(config.indexFile));
-    var index = payload.records || payload || {};
-    if (!records.__index) records.__index = {};
-    for (var key in index) {
-        if (index.hasOwnProperty(key) && index[key]) records.__index[key] = true;
-    }
-}
-
-function findHeader(headers, names) {
-    for (var i = 0; i < headers.length; i++) {
-        var h = String(headers[i] || "").trim();
-        for (var j = 0; j < names.length; j++) {
-            if (h === names[j]) return i;
-        }
-    }
-    return -1;
-}
-
-function parseCsvLine(line) {
-    var out = [];
-    var cur = "";
-    var inQuotes = false;
-    line = String(line || "");
-
-    for (var i = 0; i < line.length; i++) {
-        var ch = line.charAt(i);
-        if (ch === "\"") {
-            if (inQuotes && line.charAt(i + 1) === "\"") {
-                cur += "\"";
-                i++;
-            } else {
-                inQuotes = !inQuotes;
-            }
-        } else if (ch === "," && !inQuotes) {
-            out.push(cur);
-            cur = "";
-        } else {
-            cur += ch;
-        }
-    }
-    out.push(cur);
-    return out;
-}
-
-function recordKey(account, series) {
-    var accountKey = text.normalizeRecordKey(account);
-    var seriesKey = text.normalizeRecordKey(series);
-    if (!accountKey || !seriesKey) return "";
-    return accountKey + "::" + seriesKey;
-}
-
-function isLikelyDuplicateRecord(record, account, series) {
-    if (!record) return false;
-    var accountSame = text.isLikelySameText(record.account, account, 0.86);
-    if (!accountSame) return false;
-
-    var seriesKey = text.normalizeRecordKey(series);
-    var oldSeriesKey = text.normalizeRecordKey(record.series);
-    if (!seriesKey || !oldSeriesKey) return false;
-    if (seriesKey === oldSeriesKey) return true;
-    if (seriesKey.length >= 5 && oldSeriesKey.length >= 5) {
-        if (seriesKey.indexOf(oldSeriesKey) >= 0 || oldSeriesKey.indexOf(seriesKey) >= 0) return true;
-    }
-    return text.similarityRatio(oldSeriesKey, seriesKey) >= 0.84;
-}
-
 function displayTime(value) {
     value = String(value || "");
     var match = value.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
@@ -217,12 +71,6 @@ function csvEscape(s) {
 }
 
 module.exports = {
-    readCsv: readCsv,
-    csvExists: csvExists,
     writeCsv: writeCsv,
-    appendCsv: appendCsv,
-    saveIndex: saveIndex,
-    addRecord: addRecord,
-    isLikelyDuplicateRecord: isLikelyDuplicateRecord,
-    displayTime: displayTime
+    appendCsv: appendCsv
 };

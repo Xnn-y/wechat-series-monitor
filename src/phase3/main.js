@@ -64,44 +64,32 @@ function collectSeries(initialPage) {
     return allNames.slice(0, config.maxSeries);
 }
 
-function markNewSeries(existingRecords, outputRecords, observedRecords, accountName, seriesNames) {
+function markNewSeries(outputRecords, observedRecords, accountName, seriesNames) {
     var appended = 0;
-    var newRows = [];
+    var rows = [];
 
     seriesNames.forEach(function (seriesName) {
         var collectTime = time.beijingTime();
-        observedRecords.push({
-            account: accountName,
-            series: seriesName,
-            collectTime: collectTime
-        });
-
-        if (csvStore.csvExists(existingRecords, accountName, seriesName)) {
-            log("CSV已存在，跳过：" + accountName + " / " + seriesName);
-            return;
-        }
-
         var row = {
             account: accountName,
             series: seriesName,
             collectTime: collectTime
         };
+        observedRecords.push(row);
         outputRecords.push(row);
-        newRows.push(row);
-        csvStore.addRecord(existingRecords, row);
+        rows.push(row);
         appended++;
-        log("新增记录：" + accountName + " / " + seriesName);
+        log("记录：" + accountName + " / " + seriesName);
     });
 
-    if (newRows.length > 0) {
-        csvStore.appendCsv(newRows);
-        csvStore.saveIndex(existingRecords);
+    if (rows.length > 0) {
+        csvStore.appendCsv(rows);
     }
 
     return appended;
 }
 
-function collectAccount(account, existingRecords, outputRecords, observedRecords) {
+function collectAccount(account, outputRecords, observedRecords) {
     log("进入账号：" + account.label);
 
     var clickResult = actions.clickAccount(account, ocr);
@@ -137,7 +125,7 @@ function collectAccount(account, existingRecords, outputRecords, observedRecords
     }
     var seriesNames = collectSeries(initialSeriesPage);
     var accountNameForCsv = profileAccountName || account.label;
-    var appended = markNewSeries(existingRecords, outputRecords, observedRecords, accountNameForCsv, seriesNames);
+    var appended = markNewSeries(outputRecords, observedRecords, accountNameForCsv, seriesNames);
     log("账号完成：" + accountNameForCsv + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
 
     screen.goBack();
@@ -145,7 +133,7 @@ function collectAccount(account, existingRecords, outputRecords, observedRecords
     return true;
 }
 
-function collectAccountsOnce(existingRecords, outputRecords, observedRecords) {
+function collectAccountsOnce(outputRecords, observedRecords) {
     var processedAccounts = {};
     var processedAccountLabels = [];
     var lastAccountLabel = "";
@@ -227,7 +215,7 @@ function collectAccountsOnce(existingRecords, outputRecords, observedRecords) {
         lastAccountLabel = targetAccount.label;
         scannedCount++;
 
-        if (collectAccount(targetAccount, existingRecords, outputRecords, observedRecords)) {
+        if (collectAccount(targetAccount, outputRecords, observedRecords)) {
             successCount++;
         } else {
             failCount++;
@@ -361,12 +349,9 @@ function main() {
 
     screen.initCapture();
 
-    var existingRecords = csvStore.readCsv();
-    log("已加载历史记录 " + existingRecords.length + " 条");
-
     var outputRecords = [];
     var observedRecords = [];
-    var summary = collectAccountsOnce(existingRecords, outputRecords, observedRecords);
+    var summary = collectAccountsOnce(outputRecords, observedRecords);
 
     finishRun(summary);
 
