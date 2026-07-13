@@ -512,11 +512,8 @@ function resetFilters() {
 }
 
 function setDefaultDateFilters() {
-  var today = new Date();
-  var tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
-  document.getElementById("filterDateFrom").value = formatDateInput(today);
-  document.getElementById("filterDateTo").value = formatDateInput(tomorrow);
+  document.getElementById("filterDateFrom").value = "";
+  document.getElementById("filterDateTo").value = "";
 }
 
 function formatDateInput(d) {
