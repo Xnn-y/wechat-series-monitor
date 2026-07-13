@@ -548,6 +548,7 @@ function loadDateChips() {
 }
 
 function selectDateChip(dateStr) {
+  currentHighlightRunId = "";
   document.getElementById("filterDateFrom").value = dateStr;
   document.getElementById("filterDateTo").value = dateStr;
   currentFilters.dateFrom = dateStr;
