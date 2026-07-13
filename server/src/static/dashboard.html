@@ -512,8 +512,11 @@ function resetFilters() {
 }
 
 function setDefaultDateFilters() {
-  document.getElementById("filterDateFrom").value = "";
-  document.getElementById("filterDateTo").value = "";
+  var today = new Date();
+  var tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  document.getElementById("filterDateFrom").value = formatDateInput(today);
+  document.getElementById("filterDateTo").value = formatDateInput(tomorrow);
 }
 
 function formatDateInput(d) {
@@ -534,7 +537,9 @@ function loadDateChips() {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var dates = d.dates || [];
-      var html = "";
+      // 全部按钮
+      var allActive = !currentFilters.dateFrom ? " active" : "";
+      var html = '<span class="date-chip' + allActive + '" onclick="showAllDates()">全部</span>';
       dates.forEach(function(item) {
         var label = item.date.slice(5); // MM-DD
         var active = (currentFilters.dateFrom === item.date && !currentFilters.dateTo) ? " active" : "";
@@ -552,6 +557,16 @@ function selectDateChip(dateStr) {
   document.getElementById("filterDateTo").value = dateStr;
   currentFilters.dateFrom = dateStr;
   currentFilters.dateTo = dateStr;
+  loadDateChips();
+  search(1);
+}
+
+function showAllDates() {
+  currentHighlightRunId = "";
+  document.getElementById("filterDateFrom").value = "";
+  document.getElementById("filterDateTo").value = "";
+  currentFilters.dateFrom = "";
+  currentFilters.dateTo = "";
   loadDateChips();
   search(1);
 }
