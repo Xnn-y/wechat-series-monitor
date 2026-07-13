@@ -154,6 +154,19 @@
   .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
   .loading { text-align: center; padding: 40px; color: var(--text-secondary); }
 
+  /* 日期芯片 */
+  .date-chip {
+    padding: 4px 10px; border-radius: 14px; font-size: .78rem;
+    border: 1px solid var(--border); background: var(--card-bg);
+    cursor: pointer; white-space: nowrap; transition: all .15s;
+    color: var(--text-secondary);
+  }
+  .date-chip:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
+  .date-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .date-chip .count { font-weight: 600; margin-left: 2px; font-size: .7rem; opacity: .7; }
+  .date-chip.active .count { opacity: 1; }
+  .date-chip.has-data { color: var(--text); border-color: #a5b4fc; }
+
   /* 响应式 */
   @media (max-width: 768px) {
     .filters { flex-direction: column; }
@@ -217,6 +230,9 @@
       <button class="btn-export" onclick="exportCsv()">📥 导出CSV</button>
       <button class="btn-reset" onclick="resetFilters()">↺ 重置</button>
     </div>
+
+    <!-- 快速日期选择 -->
+    <div id="dateChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;padding:0 2px;"></div>
 
     <!-- OCR 别名管理 -->
     <div class="filters" id="aliasPanel" style="display:none;">
@@ -321,6 +337,7 @@ function init() {
 
   setDefaultDateFilters();
   loadStats();
+  loadDateChips();
   search();
 }
 
@@ -510,6 +527,33 @@ function formatDateInput(d) {
 function formatTime(t) {
   if (!t) return "-";
   return t.replace("T", " ").substring(0, 19);
+}
+
+// ===== 日期芯片 =====
+function loadDateChips() {
+  fetch(API_BASE + "/api/active-dates", { headers: getHeaders() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var dates = d.dates || [];
+      var html = "";
+      dates.forEach(function(item) {
+        var label = item.date.slice(5); // MM-DD
+        var active = (currentFilters.dateFrom === item.date && !currentFilters.dateTo) ? " active" : "";
+        var hasData = item.count > 0 ? " has-data" : "";
+        html += '<span class="date-chip' + active + hasData + '" onclick="selectDateChip(\'' + item.date + '\')">' +
+          label + '<span class="count">' + item.count + '</span></span>';
+      });
+      document.getElementById("dateChips").innerHTML = html;
+    });
+}
+
+function selectDateChip(dateStr) {
+  document.getElementById("filterDateFrom").value = dateStr;
+  document.getElementById("filterDateTo").value = dateStr;
+  currentFilters.dateFrom = dateStr;
+  currentFilters.dateTo = dateStr;
+  loadDateChips();
+  search(1);
 }
 
 // ===== OCR 别名管理 =====

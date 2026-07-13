@@ -528,6 +528,36 @@ def auth_check():
 
 
 # ============================================================
+# GET /api/active-dates - 返回有数据的日期及条数
+# ============================================================
+@api.route("/api/active-dates", methods=["GET"])
+@require_viewer
+def active_dates():
+    from datetime import date, timedelta
+    conn = get_connection()
+    try:
+        # 查询最近 7 天有数据的日期及条数
+        rows = conn.execute(
+            """SELECT DATE(collected_at) AS d, COUNT(*) AS cnt
+               FROM series_records
+               WHERE collected_at >= DATE('now', '-6 days')
+               GROUP BY d
+               ORDER BY d DESC"""
+        ).fetchall()
+        data_map = {r["d"]: r["cnt"] for r in rows}
+
+        # 生成最近 7 天完整列表（包括无数据的）
+        today = date.today()
+        dates = []
+        for i in range(6, -1, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            dates.append({"date": d, "count": data_map.get(d, 0)})
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "dates": dates})
+
+
+# ============================================================
 # GET /dashboard - 团队查看后台页面
 # ============================================================
 @api.route("/dashboard", methods=["GET"])
