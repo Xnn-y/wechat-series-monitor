@@ -567,6 +567,16 @@ def dashboard():
 
 
 # ============================================================
+# GET /login - 兼容旧项目/浏览器缓存里的登录路径
+# ============================================================
+@api.route("/login", methods=["GET"])
+@api.route("/login/", methods=["GET"])
+def login_redirect():
+    from flask import redirect
+    return redirect("/dashboard")
+
+
+# ============================================================
 # GET / - 首页重定向到 dashboard
 # ============================================================
 @api.route("/", methods=["GET"])
