@@ -42,13 +42,11 @@
         var config = {
             ocr: {
                 mode: "paddle",
-                fallbackModes: ["paddle", "mlkit", "rapid", "generic"],
-                multiEngine: true,
                 useSlim: false,
                 cpuThreadNum: 4,
                 useOpenCL: false,
-                detLongSize: 960,
-                scoreThreshold: 0.45,
+                detLongSize: 1280,
+                scoreThreshold: 0.4,
                 mergeLine: true,
                 debug: true
             },
@@ -1745,7 +1743,16 @@
         
             if (observedRecords.length > 0) {
                 // 上报本轮识别到的全部记录，由后端统一去重、入库和通知。
-                reporter.reportToBackend(observedRecords, summary);
+                var backendResult = reporter.reportToBackend(observedRecords, summary);
+                if (backendResult && backendResult.ok && backendResult.inserted > 0) {
+                    var insertedRecs = backendResult.inserted_records || [];
+                    log("========== 本轮后端新增入库 " + insertedRecs.length + " 条 ==========");
+                    for (var ir = 0; ir < insertedRecs.length; ir++) {
+                        var rec = insertedRecs[ir];
+                        log(rec.account + " / " + rec.series + "  " + (rec.episodes || ""));
+                    }
+                    log("========================================");
+                }
             } else {
                 log("本轮没有可上报的剧集识别结果");
             }

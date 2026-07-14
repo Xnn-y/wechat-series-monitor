@@ -16,13 +16,11 @@ var dataDir = joinPath(joinPath(sdcardPath(), "AutoJs6"), "phase3_data");
 var config = {
     ocr: {
         mode: "paddle",
-        fallbackModes: ["paddle", "mlkit", "rapid", "generic"],
-        multiEngine: true,
         useSlim: false,
         cpuThreadNum: 4,
         useOpenCL: false,
-        detLongSize: 960,
-        scoreThreshold: 0.45,
+        detLongSize: 1280,
+        scoreThreshold: 0.4,
         mergeLine: true,
         debug: true
     },
