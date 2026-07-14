@@ -24,27 +24,59 @@
 
   /* 登录遮罩 */
   .login-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.5);
-    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: #eef2f7;
   }
+  .login-shell {
+    width: min(920px, 100%); min-height: 520px; display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px; overflow: hidden;
+    background: #ffffff; border: 1px solid #dbe2ea; border-radius: 8px;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, .14);
+  }
+  .login-aside {
+    padding: 42px; background: #101827; color: #f8fafc;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .login-brand { display: flex; align-items: center; gap: 12px; }
+  .login-mark {
+    width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center;
+    background: #f8fafc; color: #101827; font-weight: 800; font-size: 1.05rem;
+  }
+  .login-brand h1 { font-size: 1rem; line-height: 1.2; }
+  .login-brand p { color: #9ca3af; font-size: .78rem; margin-top: 2px; }
+  .login-aside-copy { max-width: 360px; }
+  .login-aside-copy h2 { font-size: 1.9rem; line-height: 1.18; letter-spacing: 0; margin-bottom: 12px; }
+  .login-aside-copy p { color: #cbd5e1; font-size: .94rem; }
+  .login-aside-foot { color: #94a3b8; font-size: .78rem; }
   .login-box {
-    background: var(--card-bg); border-radius: var(--radius); padding: 32px;
-    width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,.15);
-    text-align: center;
+    padding: 44px 38px; display: flex; flex-direction: column; justify-content: center;
+    background: var(--card-bg);
   }
-  .login-box h2 { margin-bottom: 24px; font-size: 1.4rem; }
+  .login-box h2 { font-size: 1.25rem; margin-bottom: 6px; }
+  .login-subtitle { color: var(--text-secondary); font-size: .88rem; margin-bottom: 24px; }
+  .login-field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+  .login-field label { color: var(--text-secondary); font-size: .78rem; font-weight: 700; }
   .login-box input {
-    width: 100%; padding: 10px 14px; border: 1px solid var(--border);
-    border-radius: 8px; font-size: 1rem; margin-bottom: 12px; outline: none;
+    width: 100%; padding: 11px 12px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: .96rem; outline: none; background: #fff;
   }
   .login-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
   .login-box button {
-    width: 100%; padding: 10px; background: var(--primary); color: #fff;
-    border: none; border-radius: 8px; font-size: 1rem; cursor: pointer;
-    font-weight: 600;
+    width: 100%; min-height: 42px; padding: 10px 14px; background: var(--primary); color: #fff;
+    border: none; border-radius: 6px; font-size: .95rem; cursor: pointer;
+    font-weight: 700;
   }
-  .login-box button:hover { opacity: .9; }
-  .login-error { color: var(--danger); font-size: .85rem; margin-top: 8px; display: none; }
+  .login-box button:hover { background: #4338ca; }
+  .login-box button:disabled { cursor: wait; opacity: .7; }
+  .login-error {
+    min-height: 20px; color: var(--danger); font-size: .82rem; margin-top: 10px;
+    display: none;
+  }
+  .login-meta {
+    margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border);
+    color: var(--text-secondary); font-size: .78rem;
+  }
 
   /* 主布局 */
   .header {
@@ -171,6 +203,12 @@
 
   /* 响应式 */
   @media (max-width: 768px) {
+    .login-overlay { padding: 16px; align-items: stretch; }
+    .login-shell { min-height: auto; grid-template-columns: 1fr; }
+    .login-aside { padding: 26px; min-height: 190px; }
+    .login-aside-copy h2 { font-size: 1.45rem; }
+    .login-aside-foot { display: none; }
+    .login-box { padding: 28px 24px; }
     .filters { flex-direction: column; }
     .filter-group input { min-width: 100%; }
     .stats { grid-template-columns: 1fr 1fr; }
@@ -183,11 +221,32 @@
 
 <!-- 登录 -->
 <div class="login-overlay" id="loginOverlay">
-  <div class="login-box">
-    <h2>🔐 剧集采集监控</h2>
-    <input type="password" id="passwordInput" placeholder="请输入访问密码" autofocus>
-    <button onclick="doLogin()">登 录</button>
-    <p class="login-error" id="loginError">密码错误，请重试</p>
+  <div class="login-shell">
+    <section class="login-aside">
+      <div class="login-brand">
+        <div class="login-mark">剧</div>
+        <div>
+          <h1>剧集采集监控</h1>
+          <p>Series Monitor</p>
+        </div>
+      </div>
+      <div class="login-aside-copy">
+        <h2>采集记录与设备状态后台</h2>
+        <p>内部访问，请确认身份后继续。</p>
+      </div>
+      <div class="login-aside-foot">Internal dashboard</div>
+    </section>
+    <form class="login-box" onsubmit="doLogin(); return false;">
+      <h2>访问后台</h2>
+      <p class="login-subtitle">请输入访问密码继续</p>
+      <div class="login-field">
+        <label for="passwordInput">访问密码</label>
+        <input type="password" id="passwordInput" placeholder="输入密码" autocomplete="current-password" autofocus>
+      </div>
+      <button type="submit" id="loginButton">进入后台</button>
+      <p class="login-error" id="loginError">密码错误，请重试</p>
+      <p class="login-meta">Viewer / Admin</p>
+    </form>
   </div>
 </div>
 
@@ -282,14 +341,22 @@ const PAGE_SIZE = 20;
 // ===== 登录 =====
 function doLogin() {
   var pwd = document.getElementById("passwordInput").value;
+  var btn = document.getElementById("loginButton");
+  var err = document.getElementById("loginError");
+  err.textContent = "密码错误，请重试";
+  err.style.display = "none";
+  btn.disabled = true;
+  btn.textContent = "验证中...";
   // 先验证密码，再检测角色
   fetch(API_BASE + "/api/auth-check", {
     headers: { [ADMIN_HEADER]: pwd }
   }).then(function(r) {
     return r.json();
   }).then(function(d) {
+    btn.disabled = false;
+    btn.textContent = "进入后台";
     if (!d.role) {
-      document.getElementById("loginError").style.display = "block";
+      err.style.display = "block";
       return;
     }
     userRole = d.role;
@@ -299,6 +366,11 @@ function doLogin() {
     document.getElementById("loginOverlay").style.display = "none";
     document.getElementById("mainApp").style.display = "block";
     init();
+  }).catch(function() {
+    btn.disabled = false;
+    btn.textContent = "进入后台";
+    err.textContent = "连接失败，请稍后重试";
+    err.style.display = "block";
   });
 }
 
@@ -321,7 +393,10 @@ if (savedPwd) {
 // 回车登录
 document.addEventListener("DOMContentLoaded", function() {
   document.getElementById("passwordInput").addEventListener("keydown", function(e) {
-    if (e.key === "Enter") doLogin();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doLogin();
+    }
   });
 });
 
