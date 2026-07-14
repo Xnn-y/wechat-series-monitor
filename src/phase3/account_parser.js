@@ -79,11 +79,7 @@ function isAccountRow(row, screenHeight) {
     if (/我的关注/.test(label)) return false;
     if (/^(推荐|朋友|赞|评论|转发|可能含有AI生成内容)$/.test(label)) return false;
     if (row.top > screenHeight * 0.92) return false;
-    if (row.bottom < screenHeight * 0.08) return false;
     if (label.length < 2) return false;
-    // 过滤边界碎片：含括号、含特殊字符、以单字结尾的碎片
-    if (/[()（）]/.test(label)) return false;
-    if (/[0-9]/.test(label) && text.countChineseChars(label) < 3) return false;
     if (text.countChineseChars(label) < 2) {
         return isLikelyTopSelfAccount(row, label, screenHeight);
     }
