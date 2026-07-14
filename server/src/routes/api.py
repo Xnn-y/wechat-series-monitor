@@ -561,6 +561,7 @@ def active_dates():
 # GET /dashboard - 团队查看后台页面
 # ============================================================
 @api.route("/dashboard", methods=["GET"])
+@api.route("/dashboard/", methods=["GET"])
 def dashboard():
     return send_from_directory(STATIC_DIR, "dashboard.html")
 
