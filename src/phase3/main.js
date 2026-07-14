@@ -104,7 +104,15 @@ function collectAccount(account, outputRecords, observedRecords) {
         account.label
     );
     if (profileAccountName && profileAccountName !== account.label) {
-        log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
+        var hasTraditional = (textUtils.toSimplified(profileAccountName) !== profileAccountName);
+        var hasGarbage = /[()（）0-9]/.test(profileAccountName);
+        var tooFewChinese = textUtils.countChineseChars(profileAccountName) < 2;
+        if (hasTraditional || hasGarbage || tooFewChinese) {
+            log("主页名 OCR 可疑，沿用关注列表：" + account.label + "（主页识别：" + profileAccountName + "）");
+            profileAccountName = account.label;
+        } else {
+            log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
+        }
     }
 
     var tabResult = actions.clickSeriesTab(clickResult.img, ocr);
