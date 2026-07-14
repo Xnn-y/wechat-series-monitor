@@ -1,3 +1,4 @@
+var config = require("./config.js");
 var text = require("./text_utils.js");
 
 function extractAccounts(ocrResult, screenHeight) {
@@ -76,14 +77,39 @@ function extractProfileAccountName(ocrResult, screenHeight, fallbackName) {
 function isAccountRow(row, screenHeight) {
     var label = cleanAccountLabel(row.label);
     if (!label) return false;
+    if (!isSafeAccountRowBounds(row, screenHeight)) return false;
+    if (!isAccountTextColumn(row)) return false;
+    if (text.hasTraditionalChinese(label)) return false;
     if (/我的关注/.test(label)) return false;
+    if (/账号停止使用|停止使用|账号已注销|用户不存在/.test(label)) return false;
     if (/^(推荐|朋友|赞|评论|转发|可能含有AI生成内容)$/.test(label)) return false;
     if (row.top > screenHeight * 0.92) return false;
     if (label.length < 2) return false;
+    if (hasNoisyAccountChars(label)) return false;
     if (text.countChineseChars(label) < 2) {
         return isLikelyTopSelfAccount(row, label, screenHeight);
     }
     return true;
+}
+
+function isSafeAccountRowBounds(row, screenHeight) {
+    var topRatio = config.accountSafeTopRatio || 0.16;
+    var bottomRatio = config.accountSafeBottomRatio || 0.88;
+    var top = Number(row.top || 0);
+    var bottom = Number(row.bottom || top);
+    if (top < screenHeight * topRatio) return false;
+    if (bottom > screenHeight * bottomRatio) return false;
+    return true;
+}
+
+function isAccountTextColumn(row) {
+    var minRatio = config.accountTextMinXRatio || 0.16;
+    var minLeft = device.width * minRatio;
+    var maxRight = 0;
+    for (var i = 0; i < (row.bounds || []).length; i++) {
+        maxRight = Math.max(maxRight, Number(row.bounds[i].right || 0));
+    }
+    return maxRight >= minLeft;
 }
 
 function isLikelyTopSelfAccount(row, label, screenHeight) {
@@ -97,23 +123,27 @@ function normalizeAccountRow(row) {
 }
 
 function cleanAccountLabel(label) {
-    label = text.clean(label)
+    label = text.applyKnownOcrCorrections(text.clean(label))
         .replace(/^[^\u4e00-\u9fffA-Za-z0-9]+/, "")
-        .replace(/[<《?？]+$/g, "");
+        .replace(/[<《?？]+$/g, "")
+        .replace(/[.。]+$/g, "")
+        .replace(/[尊參参女功杜妙中一]+$/g, "");
 
     if (text.countChineseChars(label) >= 2) {
         label = label
             .replace(/[;；:：,，.。]+[A-Za-z0-9]+$/g, "")
             .replace(/[A-Za-z0-9]{1,3}$/g, "");
     }
-    return text.clean(label);
+    return text.canonicalizeKnownAccountName(label);
 }
 
 function isProfileNameCandidate(label) {
     label = text.clean(label);
     if (!label) return false;
+    if (text.hasTraditionalChinese(label)) return false;
     if (label.length < 2 || label.length > 10) return false;
     if (text.countChineseChars(label) < 2) return false;
+    if (hasNoisyAccountChars(label)) return false;
     if (/[，,。；;：:！!？?、]/.test(label)) return false;
     if (/^(主页|视频|剧集|已关注|私信|关注|搜索|更多|返回|原创内容)$/.test(label)) return false;
     if (/有限公司|文化传媒|广东|广州|福建|福州|惠州|市|区|省|分享|简介|好看|每天|更新|欢迎|觉得|关注/.test(label)) return false;
@@ -121,9 +151,20 @@ function isProfileNameCandidate(label) {
     return true;
 }
 
+function hasNoisyAccountChars(label) {
+    label = text.clean(label);
+    if (!label) return true;
+    if (/^[A-Za-z0-9_.-]{2,24}$/.test(label)) return false;
+    if (/[()（）0-9]/.test(label)) return true;
+    if (/[A-Za-z]/.test(label) && text.countChineseChars(label) >= 2) return true;
+    if (/[^一-龥A-Za-z0-9_.\-]/.test(label)) return true;
+    return false;
+}
+
 module.exports = {
     extractAccounts: extractAccounts,
     extractFollowTotal: extractFollowTotal,
     extractProfileAccountName: extractProfileAccountName,
-    cleanAccountLabel: cleanAccountLabel
+    cleanAccountLabel: cleanAccountLabel,
+    hasNoisyAccountChars: hasNoisyAccountChars
 };

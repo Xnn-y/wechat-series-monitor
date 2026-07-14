@@ -58,7 +58,7 @@ lines.push("");
 modules.forEach((name) => {
     lines.push("    __phase3Factories[" + JSON.stringify(normalizeSlashes(name)) + "] = function (require, module, exports) {");
     const body = moduleBody(name).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    body.split("\n").forEach((line) => lines.push("        " + line));
+    body.split("\n").forEach((line) => lines.push(line ? "        " + line : ""));
     lines.push("    };");
     lines.push("");
 });

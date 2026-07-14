@@ -70,12 +70,26 @@ function scrollDown() {
     swipe(w / 2, Math.round(h * 0.82), w / 2, Math.round(h * 0.28), 700);
 }
 
+function scrollDownSeriesMore() {
+    var w = device.width;
+    var h = device.height;
+    swipe(w / 2, Math.round(h * 0.86), w / 2, Math.round(h * 0.20), 850);
+}
+
 function scrollDownSmall() {
     var w = device.width;
     var h = device.height;
     var distance = Math.round(h * config.accountSmallScrollRatio);
     var startY = Math.round(h * 0.72);
     swipe(w / 2, startY, w / 2, Math.max(Math.round(h * 0.30), startY - distance), 450);
+}
+
+function scrollDownRevealNextAccount() {
+    var w = device.width;
+    var h = device.height;
+    var distance = Math.round(h * (config.accountRevealNextScrollRatio || 0.22));
+    var startY = Math.round(h * 0.76);
+    swipe(w / 2, startY, w / 2, Math.max(Math.round(h * 0.28), startY - distance), 560);
 }
 
 function scrollToTopOnce() {
@@ -111,7 +125,9 @@ module.exports = {
     recoverCaptureSession: recoverCaptureSession,
     retryCapture: retryCapture,
     scrollDown: scrollDown,
+    scrollDownSeriesMore: scrollDownSeriesMore,
     scrollDownSmall: scrollDownSmall,
+    scrollDownRevealNextAccount: scrollDownRevealNextAccount,
     scrollToTopOnce: scrollToTopOnce,
     goBack: goBack,
     toPixelRegion: toPixelRegion

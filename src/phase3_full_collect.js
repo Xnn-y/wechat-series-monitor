@@ -30,18 +30,20 @@
             } catch (e) {}
             return "/sdcard";
         }
-        
+
         function joinPath(a, b) {
             a = String(a || "");
             b = String(b || "");
             return a.replace(/[\/\\]+$/, "") + "/" + b.replace(/^[\/\\]+/, "");
         }
-        
+
         var dataDir = joinPath(joinPath(sdcardPath(), "AutoJs6"), "phase3_data");
-        
+
         var config = {
             ocr: {
                 mode: "paddle",
+                fallbackModes: ["paddle", "mlkit", "rapid", "generic"],
+                multiEngine: true,
                 useSlim: false,
                 cpuThreadNum: 4,
                 useOpenCL: false,
@@ -58,12 +60,21 @@
             captureRecoverDelay: 1800,
             maxSeries: 12,
             maxSeriesScrolls: 10,
-            maxNoNewSeriesPages: 3,
+            maxNoNewSeriesPages: 6,
             maxAccountScrolls: 30,
             maxAccountSteps: 200,
             maxEmptyAccountPages: 2,
-            accountSmallScrollRatio: 0.16,
+            maxAnchorSeekPages: 8,
+            maxRevealNextPages: 5,
+            accountSmallScrollRatio: 0.10,
+            accountRevealNextScrollRatio: 0.22,
             accountNextRowGap: 36,
+            accountNextMaxGap: 420,
+            accountSafeTopRatio: 0.16,
+            accountSafeBottomRatio: 0.97,
+            accountTextMinXRatio: 0.16,
+            allowUnknownAccounts: true,
+            profileNameOverrideSimilarity: 0.92,
             finishBackMaxSteps: 4,
             finishScrollTopSwipes: 8,
             scrollWait: 1800,
@@ -77,20 +88,20 @@
                 collectorToken: "wm_20260710_server_x9Kp72Qz"
             }
         };
-        
+
         module.exports = config;
-        
+
     };
 
     __phase3Factories["text_utils.js"] = function (require, module, exports) {
         function clean(s) {
             return String(s || "").replace(/\s+/g, " ").trim();
         }
-        
+
         function stripPunct(s) {
             return String(s || "").replace(/[,，。.、；;：:！!？?""''（）()【】\[\]\s]/g, "");
         }
-        
+
         var TRAD_TO_SIMP = (function() {
             var pairs = [
                 [0x7D05,0x7EA2],[0x9580,0x95E8],[0x898B,0x89C1],[0x99AC,0x9A6C],[0x98A8,0x98CE],[0x8ECA,0x8F66],
@@ -98,6 +109,12 @@
                 [0x6703,0x4F1A],[0x4F86,0x6765],[0x5C0D,0x5BF9],[0x52D5,0x52A8],[0x842C,0x4E07],[0x904E,0x8FC7],
                 [0x500B,0x4E2A],[0x5011,0x4EEC],[0x8AAA,0x8BF4],[0x5B78,0x5B66],[0x5BE6,0x5B9E],[0x9AD4,0x4F53],
                 [0x9F8D,0x9F99],[0x9CF3,0x51E4],[0x5922,0x68A6],[0x611B,0x7231],[0x570B,0x56FD],[0x8ECD,0x519B],
+                [0x5287,0x5267],[0x5834,0x573A],[0x865F,0x53F7],[0x8996,0x89C6],[0x983B,0x9891],[0x7E6A,0x7ED8],
+                [0x767C,0x53D1],[0x9032,0x8FDB],[0x9019,0x8FD9],[0x8CEC,0x8D26],[0x9801,0x9875],[0x9EDE,0x70B9],
+                [0x64CA,0x51FB],[0x6EFF,0x6EE1],[0x5F8C,0x540E],[0x9EBC,0x4E48],[0x8207,0x4E0E],[0x8A3B,0x6CE8],
+                [0x7D71,0x7EDF],[0x8077,0x804C],[0x8B49,0x8BC1],[0x70BA,0x4E3A],[0x5F9E,0x4ECE],[0x60E1,0x6076],
+                [0x60F1,0x607C],[0x60F2,0x60B2],[0x611B,0x7231],[0x820A,0x65E7],[0x89AA,0x4EB2],[0x91AB,0x533B],
+                [0x807D,0x542C],[0x8B80,0x8BFB],[0x8B8A,0x53D8],[0x958B,0x5F00],[0x95DC,0x5173],[0x95C6,0x677F],
                 [0x6A02,0x4E50],[0x6C23,0x6C14],[0x96FB,0x7535],[0x982D,0x5934],[0x8072,0x58F0],[0x8655,0x5904],
                 [0x98DB,0x98DE],[0x9B5A,0x9C7C],[0x9CE5,0x9E1F],[0x7570,0x5F02],[0x8449,0x53F6],[0x7FA9,0x4E49],
                 [0x8C50,0x4E30],[0x96F2,0x4E91],[0x967D,0x9633],[0x9670,0x9634],[0x9060,0x8FDC],[0x9023,0x8FDE],
@@ -111,7 +128,7 @@
             }
             return map;
         })();
-        
+
         function toSimplified(s) {
             if (typeof s !== "string") return String(s || "");
             var result = "";
@@ -121,7 +138,15 @@
             }
             return result;
         }
-        
+
+        function hasTraditionalChinese(s) {
+            s = String(s || "");
+            for (var i = 0; i < s.length; i++) {
+                if (TRAD_TO_SIMP[s.charAt(i)]) return true;
+            }
+            return false;
+        }
+
         function countChineseChars(s) {
             s = String(s || "");
             var count = 0;
@@ -135,14 +160,14 @@
             }
             return count;
         }
-        
+
         function hasChinese(s) {
             var total = String(s || "").length;
             if (total < 2) return false;
             var chCount = countChineseChars(s);
             return chCount >= 3 && (chCount / total) >= 0.70;
         }
-        
+
         function charOverlapRatio(a, b) {
             var sa = normalizeRecordKey(a);
             var sb = normalizeRecordKey(b);
@@ -155,11 +180,151 @@
             }
             return matchCount / shorter.length;
         }
-        
+
         function normalizeRecordKey(s) {
-            return normalizeOcrConfusions(toSimplified(stripPunct(clean(s))).toLowerCase());
+            return normalizeOcrConfusions(toSimplified(stripPunct(applyKnownOcrCorrections(clean(s)))).toLowerCase());
         }
-        
+
+        var KNOWN_ACCOUNT_NAMES = [
+            "鬼谷剧场",
+            "虾仁无下限",
+            "西柚虾",
+            "江十三动画",
+            "米糕短剧",
+            "微码剧场",
+            "漫绘短剧社",
+            "微时光短剧场",
+            "欢乐时光短剧场",
+            "美好时光短剧场",
+            "快乐时光短剧场",
+            "漫剧放映屋剧场",
+            "漫剧星隅剧场",
+            "漫剧拾光剧场",
+            "玲和美",
+            "阿文爱看剧",
+            "萌萌虎剧场",
+            "玖爱看漫剧",
+            "超爽漫剧",
+            "甜文禁",
+            "柒柒书漫",
+            "天使不会哭呀",
+            "金森文化"
+        ];
+
+        function applyKnownOcrCorrections(s) {
+            s = String(s || "");
+            return s
+                .replace(/玲利姜/g, "玲和美")
+                .replace(/玲利美/g, "玲和美")
+                .replace(/玖愛看漫剧/g, "玖爱看漫剧")
+                .replace(/玫爱看漫剧/g, "玖爱看漫剧")
+                .replace(/玫愛者漫剧/g, "玖爱看漫剧")
+                .replace(/起爽浸剧/g, "超爽漫剧")
+                .replace(/起爽漫剧/g, "超爽漫剧")
+                .replace(/超爽浸剧/g, "超爽漫剧")
+                .replace(/超爽漫剧妙/g, "超爽漫剧")
+                .replace(/起爽/g, "超爽")
+                .replace(/西袖虾/g, "西柚虾")
+                .replace(/阿女爱看剧/g, "阿文爱看剧")
+                .replace(/甜女禁/g, "甜文禁")
+                .replace(/師欢乐时光短场/g, "欢乐时光短剧场")
+                .replace(/欢乐时光短场/g, "欢乐时光短剧场")
+                .replace(/欢乐时光短剧场/g, "欢乐时光短剧场")
+                .replace(/抬光/g, "拾光")
+                .replace(/捨光/g, "拾光")
+                .replace(/舍光/g, "拾光")
+                .replace(/抬儿/g, "拾光")
+                .replace(/忆念/g, "")
+                .replace(/菱亭/g, "")
+                .replace(/麦亭/g, "")
+                .replace(/楚$/g, "")
+                .replace(/(拾光){2,}/g, "拾光");
+        }
+
+        function canonicalizeKnownAccountName(s) {
+            var corrected = clean(applyKnownOcrCorrections(s));
+            var key = normalizeRecordKey(corrected);
+            if (!key) return corrected;
+
+            var bestName = "";
+            var bestScore = 0;
+            for (var i = 0; i < KNOWN_ACCOUNT_NAMES.length; i++) {
+                var known = KNOWN_ACCOUNT_NAMES[i];
+                var knownKey = normalizeRecordKey(known);
+                var score = accountNameMatchScore(key, knownKey);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestName = known;
+                }
+            }
+
+            if (bestScore >= 0.78) return bestName;
+            return corrected;
+        }
+
+        function isKnownAccountName(s) {
+            var key = normalizeRecordKey(s);
+            if (!key) return false;
+            for (var i = 0; i < KNOWN_ACCOUNT_NAMES.length; i++) {
+                if (normalizeRecordKey(KNOWN_ACCOUNT_NAMES[i]) === key) return true;
+            }
+            return false;
+        }
+
+        function accountNameMatchScore(key, knownKey) {
+            if (!key || !knownKey) return 0;
+            if (key === knownKey) return 1;
+            if (key.indexOf(knownKey) >= 0) {
+                return knownKey.length >= 4 ? 0.95 : 0.82;
+            }
+            if (knownKey.indexOf(key) >= 0 && key.length >= 3) {
+                return key.length / knownKey.length;
+            }
+
+            var overlap = plainOverlapRatio(key, knownKey);
+            var edit = editSimilarity(key, knownKey);
+            return overlap * 0.45 + edit * 0.55;
+        }
+
+        function plainOverlapRatio(a, b) {
+            var shorter = a.length <= b.length ? a : b;
+            var longer = a.length <= b.length ? b : a;
+            if (!shorter) return 0;
+            var count = 0;
+            for (var i = 0; i < shorter.length; i++) {
+                if (longer.indexOf(shorter.charAt(i)) >= 0) count++;
+            }
+            return count / shorter.length;
+        }
+
+        function editSimilarity(a, b) {
+            var distance = levenshteinDistance(a, b);
+            var maxLen = Math.max(a.length, b.length);
+            if (maxLen === 0) return 1;
+            return 1 - distance / maxLen;
+        }
+
+        function levenshteinDistance(a, b) {
+            var prev = [];
+            var curr = [];
+            for (var j = 0; j <= b.length; j++) prev[j] = j;
+            for (var i = 1; i <= a.length; i++) {
+                curr[0] = i;
+                for (j = 1; j <= b.length; j++) {
+                    var cost = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+                    curr[j] = Math.min(
+                        prev[j] + 1,
+                        curr[j - 1] + 1,
+                        prev[j - 1] + cost
+                    );
+                }
+                var tmp = prev;
+                prev = curr;
+                curr = tmp;
+            }
+            return prev[b.length];
+        }
+
         function normalizeOcrConfusions(s) {
             return String(s || "")
                 .replace(/孑/g, "子")
@@ -167,7 +332,7 @@
                 .replace(/[丨|]/g, "1")
                 .replace(/[〇○]/g, "0");
         }
-        
+
         function similarityRatio(a, b) {
             var ak = normalizeRecordKey(a);
             var bk = normalizeRecordKey(b);
@@ -177,7 +342,7 @@
             var lenRatio = Math.min(ak.length, bk.length) / Math.max(ak.length, bk.length);
             return overlap * 0.75 + lenRatio * 0.25;
         }
-        
+
         function isLikelySameText(a, b, threshold) {
             threshold = threshold === undefined ? 0.86 : threshold;
             var ak = normalizeRecordKey(a);
@@ -189,7 +354,7 @@
             }
             return similarityRatio(ak, bk) >= threshold;
         }
-        
+
         function isTabText(label) {
             if (label === "主页" || label === "视频" || label === "剧集") return true;
             var parts = String(label || "").split(/\s+/);
@@ -199,26 +364,30 @@
             }
             return tabCount >= 2;
         }
-        
+
         module.exports = {
             clean: clean,
             stripPunct: stripPunct,
             toSimplified: toSimplified,
+            hasTraditionalChinese: hasTraditionalChinese,
             countChineseChars: countChineseChars,
             hasChinese: hasChinese,
             charOverlapRatio: charOverlapRatio,
             normalizeRecordKey: normalizeRecordKey,
+            applyKnownOcrCorrections: applyKnownOcrCorrections,
+            canonicalizeKnownAccountName: canonicalizeKnownAccountName,
+            isKnownAccountName: isKnownAccountName,
             normalizeOcrConfusions: normalizeOcrConfusions,
             similarityRatio: similarityRatio,
             isLikelySameText: isLikelySameText,
             isTabText: isTabText
         };
-        
+
     };
 
     __phase3Factories["screen.js"] = function (require, module, exports) {
         var config = require("./config.js");
-        
+
         function initCapture() {
             try { images.stopScreenCapture(); } catch (e) {}
             sleep(500);
@@ -229,33 +398,33 @@
             sleep(1500);
             console.log("  截图权限就绪");
         }
-        
+
         function safeCapture() {
             try { return captureScreen(); } catch (e) { return null; }
         }
-        
+
         function ensureCapture() {
             var tries = config.captureRetryTries || 8;
             var interval = config.captureRetryInterval || 650;
             var img = retryCapture(tries, interval);
             if (img) return img;
-        
+
             if (config.captureRecoverEnabled) {
                 img = recoverCaptureSession(tries, interval);
                 if (img) return img;
             }
-        
+
             if (!img) {
                 console.log("[错误] 截图连续失败，请手动检查投屏/截图权限后重跑脚本");
                 return null;
             }
             return img;
         }
-        
+
         function recoverCaptureSession(tries, interval) {
             var maxRecover = config.captureRecoverMaxTries || 1;
             var recoverDelay = config.captureRecoverDelay || 1800;
-        
+
             for (var i = 0; i < maxRecover; i++) {
                 console.log("  截图连续失败，尝试自动重建截图会话 " + (i + 1) + "/" + maxRecover);
                 try { images.stopScreenCapture(); } catch (e) {}
@@ -273,7 +442,7 @@
             }
             return null;
         }
-        
+
         function retryCapture(maxTries, intervalMs) {
             for (var i = 0; i < maxTries; i++) {
                 var img = safeCapture();
@@ -282,13 +451,19 @@
             }
             return null;
         }
-        
+
         function scrollDown() {
             var w = device.width;
             var h = device.height;
             swipe(w / 2, Math.round(h * 0.82), w / 2, Math.round(h * 0.28), 700);
         }
-        
+
+        function scrollDownSeriesMore() {
+            var w = device.width;
+            var h = device.height;
+            swipe(w / 2, Math.round(h * 0.86), w / 2, Math.round(h * 0.20), 850);
+        }
+
         function scrollDownSmall() {
             var w = device.width;
             var h = device.height;
@@ -296,17 +471,25 @@
             var startY = Math.round(h * 0.72);
             swipe(w / 2, startY, w / 2, Math.max(Math.round(h * 0.30), startY - distance), 450);
         }
-        
+
+        function scrollDownRevealNextAccount() {
+            var w = device.width;
+            var h = device.height;
+            var distance = Math.round(h * (config.accountRevealNextScrollRatio || 0.22));
+            var startY = Math.round(h * 0.76);
+            swipe(w / 2, startY, w / 2, Math.max(Math.round(h * 0.28), startY - distance), 560);
+        }
+
         function scrollToTopOnce() {
             var w = device.width;
             var h = device.height;
             swipe(w / 2, Math.round(h * 0.28), w / 2, Math.round(h * 0.82), 650);
         }
-        
+
         function goBack() {
             back();
         }
-        
+
         function toPixelRegion(roi, w, h) {
             var x = normVal(roi[0], w), y = normVal(roi[1], h);
             var rw = normVal(roi[2], w), rh = normVal(roi[3], h);
@@ -318,11 +501,11 @@
             rh = Math.round(Math.max(1, Math.min(rh, h - y)));
             return [x, y, rw, rh];
         }
-        
+
         function normVal(v, total) {
             return (v > -1 && v < 1) ? v * total : v;
         }
-        
+
         module.exports = {
             initCapture: initCapture,
             safeCapture: safeCapture,
@@ -330,12 +513,14 @@
             recoverCaptureSession: recoverCaptureSession,
             retryCapture: retryCapture,
             scrollDown: scrollDown,
+            scrollDownSeriesMore: scrollDownSeriesMore,
             scrollDownSmall: scrollDownSmall,
+            scrollDownRevealNextAccount: scrollDownRevealNextAccount,
             scrollToTopOnce: scrollToTopOnce,
             goBack: goBack,
             toPixelRegion: toPixelRegion
         };
-        
+
     };
 
     __phase3Factories["time.js"] = function (require, module, exports) {
@@ -350,22 +535,23 @@
                 p(beijing.getUTCMinutes()) + ":" +
                 p(beijing.getUTCSeconds());
         }
-        
+
         module.exports = {
             beijingTime: beijingTime
         };
-        
+
     };
 
     __phase3Factories["account_parser.js"] = function (require, module, exports) {
+        var config = require("./config.js");
         var text = require("./text_utils.js");
-        
+
         function extractAccounts(ocrResult, screenHeight) {
             var items = ocrResult.items || [];
             if (items.length === 0) return [];
-        
+
             items.sort(function(a, b) { return (a.bounds.top || 0) - (b.bounds.top || 0); });
-        
+
             var rows = [];
             var curRow = null;
             for (var i = 0; i < items.length; i++) {
@@ -373,7 +559,7 @@
                 if (!label) continue;
                 var b = items[i].bounds;
                 var y = b.top || 0;
-        
+
                 if (!curRow || y - curRow.top > 30) {
                     if (curRow && isAccountRow(curRow, screenHeight)) rows.push(normalizeAccountRow(curRow));
                     curRow = { label: label, top: y, bottom: b.bottom || (y + 50), bounds: [b] };
@@ -384,7 +570,7 @@
                 }
             }
             if (curRow && isAccountRow(curRow, screenHeight)) rows.push(normalizeAccountRow(curRow));
-        
+
             for (i = 0; i < rows.length; i++) {
                 rows[i].centerY = Math.round((rows[i].top + rows[i].bottom) / 2);
                 var l = 9999, r = 0;
@@ -397,7 +583,7 @@
             }
             return rows;
         }
-        
+
         function extractFollowTotal(ocrResult) {
             var items = (ocrResult && ocrResult.items) || [];
             for (var i = 0; i < items.length; i++) {
@@ -407,122 +593,165 @@
             }
             return 0;
         }
-        
+
         function extractProfileAccountName(ocrResult, screenHeight, fallbackName) {
             var items = (ocrResult && ocrResult.items) || [];
             var best = null;
-        
+
             for (var i = 0; i < items.length; i++) {
                 var label = cleanAccountLabel(items[i].label || "");
                 if (!isProfileNameCandidate(label)) continue;
-        
+
                 var b = items[i].bounds || {};
                 var x = (Number(b.left || 0) + Number(b.right || 0)) / 2;
                 var y = (Number(b.top || 0) + Number(b.bottom || 0)) / 2;
                 if (y < screenHeight * 0.10 || y > screenHeight * 0.30) continue;
                 if (x < device.width * 0.18 || x > device.width * 0.92) continue;
-        
+
                 var height = Math.max(1, Number(b.bottom || 0) - Number(b.top || 0));
                 var score = height * 6 - label.length * 4 - y * 0.05;
                 if (!best || score > best.score) {
                     best = { label: label, score: score };
                 }
             }
-        
+
             if (best && best.label) return best.label;
             return cleanAccountLabel(fallbackName || "");
         }
-        
+
         function isAccountRow(row, screenHeight) {
             var label = cleanAccountLabel(row.label);
             if (!label) return false;
+            if (!isSafeAccountRowBounds(row, screenHeight)) return false;
+            if (!isAccountTextColumn(row)) return false;
+            if (text.hasTraditionalChinese(label)) return false;
             if (/我的关注/.test(label)) return false;
+            if (/账号停止使用|停止使用|账号已注销|用户不存在/.test(label)) return false;
             if (/^(推荐|朋友|赞|评论|转发|可能含有AI生成内容)$/.test(label)) return false;
             if (row.top > screenHeight * 0.92) return false;
             if (label.length < 2) return false;
+            if (hasNoisyAccountChars(label)) return false;
             if (text.countChineseChars(label) < 2) {
                 return isLikelyTopSelfAccount(row, label, screenHeight);
             }
             return true;
         }
-        
+
+        function isSafeAccountRowBounds(row, screenHeight) {
+            var topRatio = config.accountSafeTopRatio || 0.16;
+            var bottomRatio = config.accountSafeBottomRatio || 0.88;
+            var top = Number(row.top || 0);
+            var bottom = Number(row.bottom || top);
+            if (top < screenHeight * topRatio) return false;
+            if (bottom > screenHeight * bottomRatio) return false;
+            return true;
+        }
+
+        function isAccountTextColumn(row) {
+            var minRatio = config.accountTextMinXRatio || 0.16;
+            var minLeft = device.width * minRatio;
+            var maxRight = 0;
+            for (var i = 0; i < (row.bounds || []).length; i++) {
+                maxRight = Math.max(maxRight, Number(row.bounds[i].right || 0));
+            }
+            return maxRight >= minLeft;
+        }
+
         function isLikelyTopSelfAccount(row, label, screenHeight) {
             if (row.top > screenHeight * 0.25) return false;
             return /^[A-Za-z0-9_.-]{2,24}$/.test(label);
         }
-        
+
         function normalizeAccountRow(row) {
             row.label = cleanAccountLabel(row.label);
             return row;
         }
-        
+
         function cleanAccountLabel(label) {
-            label = text.clean(label)
+            label = text.applyKnownOcrCorrections(text.clean(label))
                 .replace(/^[^\u4e00-\u9fffA-Za-z0-9]+/, "")
-                .replace(/[<《?？]+$/g, "");
-        
+                .replace(/[<《?？]+$/g, "")
+                .replace(/[.。]+$/g, "")
+                .replace(/[尊參参女功杜妙中一]+$/g, "");
+
             if (text.countChineseChars(label) >= 2) {
                 label = label
                     .replace(/[;；:：,，.。]+[A-Za-z0-9]+$/g, "")
                     .replace(/[A-Za-z0-9]{1,3}$/g, "");
             }
-            return text.clean(label);
+            return text.canonicalizeKnownAccountName(label);
         }
-        
+
         function isProfileNameCandidate(label) {
             label = text.clean(label);
             if (!label) return false;
+            if (text.hasTraditionalChinese(label)) return false;
             if (label.length < 2 || label.length > 10) return false;
             if (text.countChineseChars(label) < 2) return false;
+            if (hasNoisyAccountChars(label)) return false;
             if (/[，,。；;：:！!？?、]/.test(label)) return false;
             if (/^(主页|视频|剧集|已关注|私信|关注|搜索|更多|返回|原创内容)$/.test(label)) return false;
             if (/有限公司|文化传媒|广东|广州|福建|福州|惠州|市|区|省|分享|简介|好看|每天|更新|欢迎|觉得|关注/.test(label)) return false;
             if (/^\d+条/.test(label)) return false;
             return true;
         }
-        
+
+        function hasNoisyAccountChars(label) {
+            label = text.clean(label);
+            if (!label) return true;
+            if (/^[A-Za-z0-9_.-]{2,24}$/.test(label)) return false;
+            if (/[()（）0-9]/.test(label)) return true;
+            if (/[A-Za-z]/.test(label) && text.countChineseChars(label) >= 2) return true;
+            if (/[^一-龥A-Za-z0-9_.\-]/.test(label)) return true;
+            return false;
+        }
+
         module.exports = {
             extractAccounts: extractAccounts,
             extractFollowTotal: extractFollowTotal,
             extractProfileAccountName: extractProfileAccountName,
-            cleanAccountLabel: cleanAccountLabel
+            cleanAccountLabel: cleanAccountLabel,
+            hasNoisyAccountChars: hasNoisyAccountChars
         };
-        
+
     };
 
     __phase3Factories["series_parser.js"] = function (require, module, exports) {
         var text = require("./text_utils.js");
-        
+
         function readSeriesNames(img, ocr) {
             var ocrResult = ocr.ocrScreen(img, null, "series");
             var names = extractCompleteCardTitles(ocrResult.items || [], img.getHeight());
             ocr.logOcrChoice("剧集页", ocrResult, names.length);
             return names;
         }
-        
+
         function extractCompleteCardTitles(items, screenHeight) {
             var tabBottom = findSeriesContentTop(items, screenHeight);
             var episodeItems = [];
-        
+
             for (var i = 0; i < items.length; i++) {
                 var b = items[i].bounds || {};
                 var label = text.clean(items[i].label || "");
                 if (!label || (b.top || 0) <= tabBottom) continue;
-        
-                var inlineTitle = extractInlineTitleBeforeEpisode(label);
+
+                var inlineTitle = extractInlineTitleBeforeEpisode(label, false);
                 if (inlineTitle) {
                     episodeItems.push({
                         text: label,
                         title: inlineTitle,
+                        shortInlineTitle: "",
                         x: centerX(b),
                         y: b.top || 0,
                         bounds: b,
                         inline: true
                     });
-                } else if (/^\d+\s*集$/.test(label)) {
+                } else if (hasEpisodeCountLabel(label)) {
+                    var shortInlineTitle = extractInlineTitleBeforeEpisode(label, true);
                     episodeItems.push({
                         text: label,
                         title: "",
+                        shortInlineTitle: shortInlineTitle,
                         x: centerX(b),
                         y: b.top || 0,
                         bounds: b,
@@ -530,17 +759,17 @@
                     });
                 }
             }
-        
+
             episodeItems.sort(function(a, b) { return a.y - b.y; });
-        
+
             var names = [];
             var seen = {};
             for (var e = 0; e < episodeItems.length; e++) {
                 var episode = episodeItems[e];
-                var title = episode.title || titleAboveEpisode(items, episode, tabBottom);
+                var title = episode.title || titleAboveEpisode(items, episode, tabBottom, episode.shortInlineTitle);
                 title = cleanSeriesTitle(title);
                 if (!title || !isSeriesTitleCandidate(title)) continue;
-        
+
                 var key = text.toSimplified(text.stripPunct(title));
                 if (seen[key]) continue;
                 seen[key] = true;
@@ -548,7 +777,7 @@
             }
             return names;
         }
-        
+
         function findSeriesContentTop(items, screenHeight) {
             var tabBottom = 0;
             for (var i = 0; i < items.length; i++) {
@@ -561,72 +790,118 @@
             if (tabBottom === 0) tabBottom = Math.round(screenHeight * 0.35);
             return tabBottom + 40;
         }
-        
-        function titleAboveEpisode(items, episode, tabBottom) {
+
+        function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
             var titleParts = [];
             var minY = Math.max(tabBottom, episode.y - 180);
             var maxY = episode.y + 4;
             var columnCenter = episode.x;
             var columnHalfWidth = Math.max(130, device.width * 0.24);
-        
+
             for (var i = 0; i < items.length; i++) {
                 var b = items[i].bounds || {};
                 var label = text.clean(items[i].label || "");
                 if (!label) continue;
-                if (/^\d+\s*集$/.test(label)) continue;
+                if (hasEpisodeCountLabel(label)) continue;
                 if (text.isTabText(label)) continue;
-        
+
                 var top = b.top || 0;
                 if (top < minY || top > maxY) continue;
                 if (Math.abs(centerX(b) - columnCenter) > columnHalfWidth) continue;
-                if (text.countChineseChars(text.stripPunct(label)) < 2) continue;
-        
+                if (!isTitlePartCandidate(label, b, episode)) continue;
+
                 titleParts.push({ text: label, y: top, x: b.left || 0 });
             }
-        
+
             titleParts.sort(function(a, b) {
                 if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
                 return a.x - b.x;
             });
-            return titleParts.map(function(item) { return item.text; }).join("");
+            var title = titleParts.map(function(item) { return item.text; }).join("");
+            if (shortInlineTitle && title.indexOf(shortInlineTitle) < 0) {
+                title += shortInlineTitle;
+            }
+            return title;
         }
-        
-        function extractInlineTitleBeforeEpisode(label) {
+
+        function extractInlineTitleBeforeEpisode(label, allowShort) {
             var cleanLabel = text.clean(label).replace(/\s+/g, "");
             var match = cleanLabel.match(/^(.+?)(\d{1,3})集$/);
             if (!match) return "";
-        
+
             var title = match[1];
             if (/^\d+$/.test(title)) return "";
-            if (text.countChineseChars(text.stripPunct(title)) < 2) return "";
+            var chineseCount = text.countChineseChars(text.stripPunct(title));
+            if (chineseCount < 2) {
+                return allowShort && chineseCount === 1 ? title : "";
+            }
             return title;
         }
-        
+
+        function hasEpisodeCountLabel(label) {
+            label = text.clean(label).replace(/\s+/g, "");
+            return /^\d{1,3}集$/.test(label) || /^.+?\d{1,3}集$/.test(label);
+        }
+
+        function isTitlePartCandidate(label, bounds, episode) {
+            var cleanLabel = text.toSimplified(text.clean(label)).replace(/\s+/g, "");
+            var compact = text.stripPunct(cleanLabel).replace(/[\-—–_~·•《》「」『』【】]/g, "");
+            var chineseCount = text.countChineseChars(compact);
+            if (chineseCount >= 2) return true;
+            if (chineseCount !== 1) return false;
+            if (/^(集|第|共|全|更|赞|评|分|私|信)$/.test(compact)) return false;
+            if (/^[\-—–_~·•.。:：，,、]+$/.test(cleanLabel)) return false;
+            var bottom = Number(bounds.bottom || bounds.top || 0);
+            var gap = episode.y - bottom;
+            return gap >= -8 && gap <= 95;
+        }
+
         function cleanSeriesTitle(title) {
-            return text.clean(title)
+            title = text.applyKnownOcrCorrections(title);
+            title = extractDecoratedTitle(title);
+            title = text.toSimplified(text.clean(title))
                 .replace(/\s+/g, "")
                 .replace(/^\d+/, "")
-                .replace(/[，,。；;：:、]+$/g, "");
+                .replace(/[《》「」『』【】]/g, "")
+                .replace(/^[\-—–_~·•.。:：，,、]+/, "")
+                .replace(/[\-—–_~·•.。；;：:，,、]+$/g, "");
+            if (text.hasTraditionalChinese(title)) return "";
+            return title;
         }
-        
+
         function isSeriesTitleCandidate(title) {
+            title = text.toSimplified(text.clean(title));
+            if (text.hasTraditionalChinese(title)) return false;
             var compact = text.stripPunct(title);
+            compact = compact.replace(/[\-—–_~·•《》「」『』【】]/g, "");
             if (!compact || compact.length < 2 || compact.length > 40) return false;
             if (text.countChineseChars(compact) < 2) return false;
+            if (/^[\-—–_~·•]+$/.test(title)) return false;
             if (/^\d+$/.test(compact)) return false;
             if (/^\d+集$/.test(compact)) return false;
             if (/^(主页|视频|剧集|全部|私信|已关注|原创内容)$/.test(compact)) return false;
             if (/^(赞|评论|转发|搜索|更多|返回)$/.test(compact)) return false;
             return true;
         }
-        
+
+        function extractDecoratedTitle(title) {
+            title = text.clean(title);
+            var match = title.match(/《([^》]{2,40})》/);
+            if (match) return match[1];
+            match = title.match(/「([^」]{2,40})」/);
+            if (match) return match[1];
+            match = title.match(/『([^』]{2,40})』/);
+            if (match) return match[1];
+            return title;
+        }
+
         function mergeAndDedup(existing, newNames) {
             for (var i = 0; i < newNames.length; i++) {
                 if (!nameExists(existing, newNames[i])) existing.push(newNames[i]);
             }
             return dedupSubstrings(existing);
         }
-        
+
         function nameExists(list, name) {
             var cleanName = text.toSimplified(text.stripPunct(name));
             for (var i = 0; i < list.length; i++) {
@@ -641,7 +916,7 @@
             }
             return false;
         }
-        
+
         function isFragmentMerge(name, existing) {
             if (existing.length < 2) return false;
             var nameLen = name.length;
@@ -669,7 +944,7 @@
             }
             return prefixLen + suffixLen >= nameLen * 0.6;
         }
-        
+
         function dedupSubstrings(list) {
             var result = [];
             for (var i = 0; i < list.length; i++) {
@@ -687,24 +962,24 @@
             }
             return result;
         }
-        
+
         function centerX(bounds) {
             return (Number(bounds.left || 0) + Number(bounds.right || 0)) / 2;
         }
-        
+
         module.exports = {
             readSeriesNames: readSeriesNames,
             extractCompleteCardTitles: extractCompleteCardTitles,
             mergeAndDedup: mergeAndDedup
         };
-        
+
     };
 
     __phase3Factories["ocr.js"] = function (require, module, exports) {
         var config = require("./config.js");
         var text = require("./text_utils.js");
         var seriesParser = require("./series_parser.js");
-        
+
         function ocrScreen(img, region, purpose) {
             var baseOptions = {
                 useSlim: config.ocr.useSlim,
@@ -715,16 +990,16 @@
             if (config.ocr.scoreThreshold !== null && config.ocr.scoreThreshold !== undefined) baseOptions.scoreThreshold = config.ocr.scoreThreshold;
             if (config.ocr.mergeLine) baseOptions.mergeLine = true;
             if (region) baseOptions.region = region;
-        
+
             var modes = config.ocr.fallbackModes.slice();
             if (modes.indexOf(config.ocr.mode) < 0) modes.unshift(config.ocr.mode);
             var attempts = [];
             var errors = [];
-        
+
             for (var i = 0; i < modes.length; i++) {
                 var mode = modes[i];
                 if (mode === "generic" && hasAvailableAttempt(attempts)) continue;
-        
+
                 var attempt = tryOcr(img, baseOptions, mode);
                 if (attempt.ok) {
                     var items = normalizeItems(attempt.raw, mode);
@@ -741,7 +1016,7 @@
                     errors.push(mode + ": " + attempt.error);
                 }
             }
-        
+
             var best = pickBestOcrAttempt(attempts);
             if (best) {
                 best.selection = "multi_engine_score";
@@ -751,14 +1026,14 @@
             }
             return { mode: "none", count: 0, items: [], score: -9999, errors: errors, attempts: attempts };
         }
-        
+
         function hasAvailableAttempt(attempts) {
             for (var i = 0; i < attempts.length; i++) {
                 if (attempts[i] && attempts[i].count > 0) return true;
             }
             return false;
         }
-        
+
         function pickBestOcrAttempt(attempts) {
             var best = null;
             for (var i = 0; i < attempts.length; i++) {
@@ -767,17 +1042,17 @@
             }
             return best;
         }
-        
+
         function scoreOcrItems(items, mode, img, purpose) {
             if (!items || items.length === 0) return -1000;
-        
+
             var textLength = 0;
             var chineseCount = 0;
             var confSum = 0;
             var confCount = 0;
             var duplicateCount = 0;
             var seen = {};
-        
+
             for (var i = 0; i < items.length; i++) {
                 var label = text.clean(items[i].label || "");
                 if (!label) continue;
@@ -785,14 +1060,14 @@
                 chineseCount += text.countChineseChars(label);
                 if (seen[label]) duplicateCount++;
                 seen[label] = true;
-        
+
                 var conf = normalizeConfidence(items[i].confidence);
                 if (conf !== null) {
                     confSum += conf;
                     confCount++;
                 }
             }
-        
+
             var avgConfidence = confCount ? confSum / confCount : 0.5;
             var score = 0;
             score += items.length * 4;
@@ -801,21 +1076,21 @@
             score += avgConfidence * 60;
             score -= duplicateCount * 8;
             score += ocrModeWeight(mode);
-        
+
             if (purpose === "series") {
                 score += scoreSeriesOcrItems(items, img ? img.getHeight() : 0);
             }
-        
+
             return score;
         }
-        
+
         function scoreSeriesOcrItems(items, screenHeight) {
             var names = seriesParser.extractCompleteCardTitles(items, screenHeight || device.height);
             var textLen = 0;
             for (var i = 0; i < names.length; i++) textLen += names[i].length;
             return names.length * 160 + Math.min(textLen, 160) * 2;
         }
-        
+
         function ocrModeWeight(mode) {
             if (mode === "paddle") return 4;
             if (mode === "mlkit") return 2;
@@ -823,7 +1098,7 @@
             if (mode === "generic") return -3;
             return 0;
         }
-        
+
         function normalizeConfidence(confidence) {
             if (confidence === undefined || confidence === null || confidence === "") return null;
             var value = Number(confidence);
@@ -832,7 +1107,7 @@
             if (value < 0) return null;
             return Math.max(0, Math.min(1, value));
         }
-        
+
         function logOcrChoice(label, result, candidateCount) {
             if (!config.ocr.debug || !result) return;
             var parts = [];
@@ -848,7 +1123,7 @@
                 " score=" + Math.round(result.score || 0) +
                 " candidates=" + candidateCount + suffix);
         }
-        
+
         function tryOcr(img, baseOptions, mode) {
             if (typeof ocr === "undefined") return { ok: false, error: "ocr 不可用" };
             var opts = {};
@@ -873,7 +1148,7 @@
                 return { ok: false, error: String(e) };
             }
         }
-        
+
         function normalizeItems(results, mode) {
             var out = [];
             if (!results) return out;
@@ -885,7 +1160,7 @@
             }
             return out;
         }
-        
+
         function getItem(results, idx) {
             try {
                 if (typeof results.get === "function") return results.get(idx);
@@ -893,7 +1168,7 @@
             } catch (e) {}
             return null;
         }
-        
+
         function ocrLen(results) {
             if (!results) return 0;
             if (typeof results.length === "number") return results.length;
@@ -902,17 +1177,17 @@
             } catch (e) {}
             return 0;
         }
-        
+
         function rectObj(rect) {
             if (!rect) return { left: 0, top: 0, right: 0, bottom: 0 };
             return { left: Number(rect.left || 0), top: Number(rect.top || 0), right: Number(rect.right || 0), bottom: Number(rect.bottom || 0) };
         }
-        
+
         module.exports = {
             ocrScreen: ocrScreen,
             logOcrChoice: logOcrChoice
         };
-        
+
     };
 
     __phase3Factories["csv_store.js"] = function (require, module, exports) {
@@ -924,26 +1199,26 @@
          */
         var config = require("./config.js");
         var time = require("./time.js");
-        
+
         function writeCsv(results) {
             appendCsv(results);
         }
-        
+
         function appendCsv(results) {
             if (!results || results.length === 0) return;
             if (!ensureDataDir()) return;
-        
+
             var isNew = !files.exists(config.csvFile);
             var lines = [];
             if (isNew) lines.push("账号名称,剧集名称,采集时间");
-        
+
             for (var i = 0; i < results.length; i++) {
                 var acc = csvEscape(results[i].account);
                 var ser = csvEscape(results[i].series);
                 var collectTime = results[i].collectTime || time.beijingTime();
                 lines.push(acc + "," + ser + "," + csvEscape(displayTime(collectTime)));
             }
-        
+
             try {
                 if (isNew) {
                     files.write(config.csvFile, lines.join("\n"));
@@ -954,7 +1229,7 @@
                 console.log("  [警告] 写入CSV失败: " + e);
             }
         }
-        
+
         function ensureDataDir() {
             try {
                 var dir = new java.io.File(config.csvDir);
@@ -972,14 +1247,14 @@
                 return false;
             }
         }
-        
+
         function displayTime(value) {
             value = String(value || "");
             var match = value.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
             if (!match) return value;
             return match[1] + " " + match[2] + "时" + match[3] + "分" + match[4] + "秒";
         }
-        
+
         function csvEscape(s) {
             s = String(s || "");
             if (s.indexOf(",") >= 0 || s.indexOf("\"") >= 0 || s.indexOf("\n") >= 0) {
@@ -987,19 +1262,19 @@
             }
             return s;
         }
-        
+
         module.exports = {
             writeCsv: writeCsv,
             appendCsv: appendCsv
         };
-        
+
     };
 
     __phase3Factories["actions.js"] = function (require, module, exports) {
         var config = require("./config.js");
         var screen = require("./screen.js");
         var text = require("./text_utils.js");
-        
+
         function clickAccount(account, ocrRunner) {
             var w = device.width;
             var points = [
@@ -1008,23 +1283,23 @@
                 { x: Math.round(w * 0.55), y: account.centerY, label: "mid_right" },
                 { x: account.textCenterX, y: account.centerY, label: "text_center" }
             ];
-        
+
             for (var pi = 0; pi < points.length; pi++) {
                 var pt = points[pi];
                 click(pt.x, pt.y);
                 sleep(config.pageDelay + 800);
-        
+
                 var verifyImg = screen.retryCapture(2, 500);
                 if (!verifyImg) continue;
-        
+
                 var vOcr = ocrRunner.ocrScreen(verifyImg, null);
                 if (isAccountProfile(vOcr)) return { success: true, img: verifyImg, ocrResult: vOcr };
                 verifyImg.recycle();
             }
-        
+
             return { success: false };
         }
-        
+
         function isAccountProfile(ocrResult) {
             var labels = [];
             for (var i = 0; i < ((ocrResult && ocrResult.items) || []).length; i++) {
@@ -1037,10 +1312,10 @@
             if (joined.indexOf("已关注") >= 0 && (joined.indexOf("私信") >= 0 || joined.indexOf("客服") >= 0)) return true;
             return false;
         }
-        
+
         function clickSeriesTab(initialImg, ocrRunner) {
             sleep(config.pageDelay);
-        
+
             var img = initialImg || null;
             if (!img) {
                 img = screen.retryCapture(5, 500);
@@ -1048,11 +1323,11 @@
                 if (!img) return false;
             }
             var ownsImage = img !== initialImg;
-        
+
             var w = img.getWidth();
             var h = img.getHeight();
             var ocrResult = ocrRunner.ocrScreen(img, null, "tab");
-        
+
             if (looksLikeSeriesPage(ocrResult, w, h)) {
                 log("当前已在剧集页，跳过Tab点击，直接读取");
                 if (ownsImage) img.recycle();
@@ -1063,7 +1338,7 @@
                     firstPageHeight: h
                 };
             }
-        
+
             var best = null;
             for (var i = 0; i < (ocrResult.items || []).length; i++) {
                 var label = text.clean(ocrResult.items[i].label || "");
@@ -1081,7 +1356,7 @@
                     }
                 }
             }
-        
+
             if (best) {
                 log("点击剧集Tab：" + best.label + " @ " + best.x + "," + best.y);
                 click(best.x, best.y);
@@ -1089,7 +1364,7 @@
                 if (ownsImage) img.recycle();
                 return { success: true, clickedTab: true };
             }
-        
+
             if (looksLikeSeriesPage(ocrResult, w, h)) {
                 log("未定位到剧集Tab，但当前页面已有剧集卡片，直接读取");
                 if (ownsImage) img.recycle();
@@ -1100,18 +1375,18 @@
                     firstPageHeight: h
                 };
             }
-        
+
             if (ownsImage) img.recycle();
             return { success: false };
         }
-        
+
         function tabScore(label) {
             if (label === "剧集") return 120;
             if (/^(主页|视频|剧集)$/.test(label)) return 100;
             if (label.indexOf("剧集") >= 0 && label.length <= 8) return 80;
             return 50;
         }
-        
+
         function tabClickPoint(label, bounds) {
             var left = Number(bounds.left || 0);
             var right = Number(bounds.right || 0);
@@ -1120,19 +1395,19 @@
             var cleanLabel = text.clean(label).replace(/\s+/g, "");
             var index = cleanLabel.indexOf("剧集");
             var x;
-        
+
             if (cleanLabel === "剧集" || index < 0 || right <= left) {
                 x = (left + right) / 2;
             } else {
                 x = left + ((index + 1) / Math.max(cleanLabel.length, 1)) * (right - left);
             }
-        
+
             return {
                 x: Math.round(x),
                 y: Math.round((top + bottom) / 2)
             };
         }
-        
+
         function looksLikeSeriesPage(ocrResult, w, h) {
             var episodeCount = 0;
             var hasSeriesHeader = false;
@@ -1170,7 +1445,7 @@
                 lowerCardTextCount >= 2
             );
         }
-        
+
         function isTabBounds(bounds, w, h) {
             var x = (Number(bounds.left || 0) + Number(bounds.right || 0)) / 2;
             var y = (Number(bounds.top || 0) + Number(bounds.bottom || 0)) / 2;
@@ -1178,13 +1453,13 @@
             if (x < w * 0.03 || x > w * 0.70) return false;
             return true;
         }
-        
+
         module.exports = {
             clickAccount: clickAccount,
             isAccountProfile: isAccountProfile,
             clickSeriesTab: clickSeriesTab
         };
-        
+
     };
 
     __phase3Factories["reporter.js"] = function (require, module, exports) {
@@ -1194,10 +1469,10 @@
          * 每轮采集结束后，将本轮结果 POST 到后端 /api/collect。
          * 本地 CSV 仍保留完整备份，上报不影响本地存储。
          */
-        
+
         var config = require("./config.js");
         var time = require("./time.js");
-        
+
         /**
          * 上报本轮采集结果到后端
          * @param {Array} outputRecords - [{account, series, collectTime}, ...]
@@ -1209,34 +1484,34 @@
                 log("[上报] 后端上报已关闭，跳过");
                 return { ok: false, skipped: true, error: "backend disabled" };
             }
-        
+
             if (!outputRecords || outputRecords.length === 0) {
                 log("[上报] 没有可上报记录，跳过");
                 return { ok: true, skipped: true, received: 0, inserted: 0, duplicates: 0 };
             }
-        
+
             var serverUrl = (config.backend && config.backend.serverUrl) || "";
             var token = (config.backend && config.backend.collectorToken) || "";
-        
+
             if (!serverUrl) {
                 log("[上报] 后端地址未配置，跳过上报");
                 return { ok: false, error: "serverUrl 未配置" };
             }
-        
+
             var collectUrl = serverUrl.replace(/\/+$/, "") + "/api/collect";
-        
+
             // 生成 run_id
             var now = new Date();
             var runId = time.beijingTime().replace(/[:\-\s]/g, "_")
                 .replace(/\.\d+/, "");
-        
+
             // 收集本轮开始时间：取最早记录的采集时间
             var startedAt = runId;
             if (outputRecords.length > 0) {
                 startedAt = outputRecords[0].collectTime || time.beijingTime();
             }
             var finishedAt = time.beijingTime();
-        
+
             // 设备标识
             var deviceName = "";
             try {
@@ -1245,7 +1520,7 @@
                 }
             } catch (e) {}
             if (!deviceName) deviceName = "android_device";
-        
+
             // 构建 records 数组
             var records = [];
             for (var i = 0; i < outputRecords.length; i++) {
@@ -1256,7 +1531,7 @@
                     collected_at: outputRecords[i].collectTime || finishedAt
                 });
             }
-        
+
             var payload = {
                 device: deviceName,
                 run_id: runId,
@@ -1264,9 +1539,9 @@
                 finished_at: finishedAt,
                 records: records
             };
-        
+
             log("[上报] 准备发送 " + records.length + " 条记录到 " + collectUrl);
-        
+
             try {
                 var res;
                 if (typeof http.postJson === "function") {
@@ -1286,7 +1561,7 @@
                         }
                     });
                 }
-        
+
                 var statusCode = res.statusCode || 0;
                 var bodyText = "";
                 try {
@@ -1300,9 +1575,9 @@
                 } catch (e) {
                     bodyText = "[无法读取响应体]";
                 }
-        
+
                 log("[上报] HTTP " + statusCode + ": " + bodyText);
-        
+
                 if (statusCode === 200 || statusCode === 201) {
                     try {
                         var result = JSON.parse(bodyText);
@@ -1324,19 +1599,19 @@
                 return { ok: false, error: String(e) };
             }
         }
-        
+
         /**
          * 发送心跳到后端
          * @param {string} status - "alive" | "collecting" | "idle" | "error"
          */
         function sendHeartbeat(status) {
             if (config.backend && config.backend.enabled === false) return;
-        
+
             var serverUrl = (config.backend && config.backend.serverUrl) || "";
             var token = (config.backend && config.backend.collectorToken) || "";
-        
+
             if (!serverUrl) return;
-        
+
             var heartbeatUrl = serverUrl.replace(/\/+$/, "") + "/api/heartbeat";
             var deviceName = "";
             try {
@@ -1345,9 +1620,9 @@
                 }
             } catch (e) {}
             if (!deviceName) deviceName = "android_device";
-        
+
             var payload = { device: deviceName, status: status || "alive" };
-        
+
             try {
                 if (typeof http.postJson === "function") {
                     http.postJson(heartbeatUrl, payload, {
@@ -1369,17 +1644,17 @@
                 log("[心跳] 发送异常: " + e);
             }
         }
-        
+
         module.exports = {
             reportToBackend: reportToBackend,
             sendHeartbeat: sendHeartbeat
         };
-        
+
     };
 
     __phase3Factories["main.js"] = function (require, module, exports) {
         "auto";
-        
+
         var config = require("./config.js");
         var screen = require("./screen.js");
         var ocr = require("./ocr.js");
@@ -1390,11 +1665,11 @@
         var reporter = require("./reporter.js");
         var textUtils = require("./text_utils.js");
         var time = require("./time.js");
-        
+
         function collectSeries(initialPage) {
             var allNames = [];
             var noNewCount = 0;
-        
+
             sleep(config.pageDelay);
             for (var scroll = 0; scroll < config.maxSeriesScrolls; scroll++) {
                 var pageNames;
@@ -1410,22 +1685,22 @@
                         warn("剧集页截图失败，结束当前账号采集");
                         break;
                     }
-        
+
                     pageNames = seriesParser.readSeriesNames(pageImg, ocr);
                     pageImg.recycle();
                 }
-        
+
                 var beforeCount = allNames.length;
                 allNames = seriesParser.mergeAndDedup(allNames, pageNames);
                 var newCount = allNames.length - beforeCount;
-        
+
                 log("本屏识别完整剧集：" + pageNames.join(" | "));
                 log("新增剧集 " + newCount + " 个，累计 " + allNames.length + " 个");
-        
+
                 if (allNames.length >= config.maxSeries) {
                     break;
                 }
-        
+
                 if (newCount === 0) {
                     noNewCount++;
                     if (noNewCount >= config.maxNoNewSeriesPages) {
@@ -1435,19 +1710,23 @@
                 } else {
                     noNewCount = 0;
                 }
-        
+
                 log("剧集未满 " + config.maxSeries + " 个，向下滑动继续识别");
-                screen.scrollDown();
+                if (newCount === 0) {
+                    screen.scrollDownSeriesMore();
+                } else {
+                    screen.scrollDown();
+                }
                 sleep(config.scrollWait);
             }
-        
+
             return allNames.slice(0, config.maxSeries);
         }
-        
+
         function markNewSeries(outputRecords, observedRecords, accountName, seriesNames) {
             var appended = 0;
             var rows = [];
-        
+
             seriesNames.forEach(function (seriesName) {
                 var collectTime = time.beijingTime();
                 var row = {
@@ -1461,32 +1740,33 @@
                 appended++;
                 log("记录：" + accountName + " / " + seriesName);
             });
-        
+
             if (rows.length > 0) {
                 csvStore.appendCsv(rows);
             }
-        
+
             return appended;
         }
-        
+
         function collectAccount(account, outputRecords, observedRecords) {
             log("进入账号：" + account.label);
-        
+
             var clickResult = actions.clickAccount(account, ocr);
             if (!clickResult.success) {
                 warn("进入账号失败：" + account.label);
                 return false;
             }
-        
+
             var profileAccountName = accountParser.extractProfileAccountName(
                 clickResult.ocrResult,
                 clickResult.img.getHeight(),
                 account.label
             );
+            profileAccountName = pickTrustedProfileAccountName(account.label, profileAccountName);
             if (profileAccountName && profileAccountName !== account.label) {
                 log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
             }
-        
+
             var tabResult = actions.clickSeriesTab(clickResult.img, ocr);
             clickResult.img.recycle();
             if (!tabResult.success) {
@@ -1495,7 +1775,7 @@
                 sleep(config.pageDelay);
                 return false;
             }
-        
+
             var initialSeriesPage = null;
             if (tabResult.alreadySeriesPage) {
                 initialSeriesPage = {
@@ -1507,12 +1787,32 @@
             var accountNameForCsv = profileAccountName || account.label;
             var appended = markNewSeries(outputRecords, observedRecords, accountNameForCsv, seriesNames);
             log("账号完成：" + accountNameForCsv + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
-        
+
             screen.goBack();
             sleep(config.pageDelay);
             return true;
         }
-        
+
+        function pickTrustedProfileAccountName(listName, profileName) {
+            listName = accountParser.cleanAccountLabel(listName || "");
+            profileName = accountParser.cleanAccountLabel(profileName || "");
+            if (!profileName || profileName === listName) return listName;
+            if (textUtils.hasTraditionalChinese(profileName)) {
+                log("主页账号名含繁体，保留列表名：" + listName + " / " + profileName);
+                return listName;
+            }
+            if (accountParser.hasNoisyAccountChars(profileName)) {
+                log("主页账号名疑似误识别，保留列表名：" + listName + " / " + profileName);
+                return listName;
+            }
+            var similarity = textUtils.similarityRatio(listName, profileName);
+            if (similarity < (config.profileNameOverrideSimilarity || 0.78)) {
+                log("主页账号名与列表名不一致，保留列表名：" + listName + " / " + profileName + " similarity=" + Math.round(similarity * 100));
+                return listName;
+            }
+            return profileName;
+        }
+
         function collectAccountsOnce(outputRecords, observedRecords) {
             var processedAccounts = {};
             var processedAccountLabels = [];
@@ -1521,18 +1821,19 @@
             var successCount = 0;
             var failCount = 0;
             var emptyPages = 0;
-            var skippedTopOnce = false;
+            var anchorSeekPages = 0;
+            var revealNextPages = 0;
             var targetAccountCount = 0;
             var endedOnFollowingList = true;
             var endReason = "unknown";
-        
+
             for (var step = 0; step < config.maxAccountSteps; step++) {
                 if (targetAccountCount > 0 && scannedCount >= targetAccountCount) {
                     log("已遍历关注账号数 " + scannedCount + "/" + targetAccountCount + "，结束");
                     endReason = "scanned_all_accounts";
                     break;
                 }
-        
+
                 var img = screen.ensureCapture();
                 if (!img) {
                     warn("关注列表截图连续失败，结束本轮遍历");
@@ -1550,35 +1851,66 @@
                 }
                 var visibleAccounts = accountParser.extractAccounts(ocrResult, img.getHeight());
                 img.recycle();
-        
+
                 var targetAccount = null;
                 var candidates = [];
+                var knownCandidates = [];
                 var lastVisibleY = -1;
-                visibleAccounts.forEach(function (account, index) {
-                    if (!skippedTopOnce && index === 0) {
-                        log("跳过关注列表首项：" + account.label);
-                        rememberProcessedAccount(processedAccounts, processedAccountLabels, account.label);
-                        skippedTopOnce = true;
-                        return;
-                    }
-        
+                visibleAccounts.forEach(function (account) {
                     if (sameAccountLabel(account.label, lastAccountLabel)) {
                         lastVisibleY = account.centerY;
                     }
-        
-                    if (isProcessedAccount(processedAccountLabels, account.label)) {
+
+                    if (isProcessedAccount(processedAccounts, processedAccountLabels, account.label)) {
                         return;
                     }
-        
+
                     candidates.push(account);
+                    if (textUtils.isKnownAccountName(account.label)) {
+                        knownCandidates.push(account);
+                    }
                 });
-        
+
                 log("关注列表第 " + (step + 1) + " 次扫描，识别账号："
                     + visibleAccounts.map(function (item) { return item.label; }).join(" | "));
-        
-                targetAccount = pickNextAccount(candidates, lastVisibleY);
-        
+
+                if (config.allowUnknownAccounts !== true && knownCandidates.length < candidates.length) {
+                    log("忽略非标准账号候选：" + candidates.filter(function (item) {
+                        return !textUtils.isKnownAccountName(item.label);
+                    }).map(function (item) { return item.label; }).join(" | "));
+                }
+
+                var pickCandidates = (config.allowUnknownAccounts === true && knownCandidates.length === 0)
+                    ? candidates
+                    : knownCandidates;
+                var pickResult = pickNextAccount(pickCandidates, lastVisibleY, lastAccountLabel);
+                targetAccount = pickResult.account;
+
                 if (!targetAccount) {
+                    if (lastAccountLabel) {
+                        if (pickResult.anchorVisible) {
+                            anchorSeekPages = 0;
+                            revealNextPages++;
+                            if (revealNextPages >= (config.maxRevealNextPages || 5)) {
+                                warn("连续无法露出上次账号后的下一行，按关注列表已到底处理：" + lastAccountLabel);
+                                endReason = "reached_list_bottom";
+                                break;
+                            }
+                            log("上次账号仍在屏幕内但下一行未完整露出，继续下滑露出下一账号：" + lastAccountLabel);
+                            screen.scrollDownRevealNextAccount();
+                            sleep(config.scrollWait);
+                            continue;
+                        }
+                        anchorSeekPages++;
+                        if (anchorSeekPages >= (config.maxAnchorSeekPages || 8)) {
+                            warn("连续找不到上次账号锚点，结束遍历：" + lastAccountLabel);
+                            endReason = "anchor_lost";
+                            break;
+                        }
+                        screen.scrollDownSmall();
+                        sleep(config.scrollWait);
+                        continue;
+                    }
                     emptyPages++;
                     if (emptyPages >= config.maxEmptyAccountPages) {
                         log("连续没有新账号，结束关注列表遍历");
@@ -1589,19 +1921,21 @@
                     sleep(config.scrollWait);
                     continue;
                 }
-        
+
                 emptyPages = 0;
+                anchorSeekPages = 0;
+                revealNextPages = 0;
                 rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
                 lastAccountLabel = targetAccount.label;
                 scannedCount++;
-        
+
                 if (collectAccount(targetAccount, outputRecords, observedRecords)) {
                     successCount++;
                 } else {
                     failCount++;
                 }
             }
-        
+
             return {
                 scannedCount: scannedCount,
                 successCount: successCount,
@@ -1610,38 +1944,60 @@
                 endReason: endReason
             };
         }
-        
-        function pickNextAccount(candidates, lastVisibleY) {
-            if (!candidates.length) return null;
+
+        function pickNextAccount(candidates, lastVisibleY, lastAccountLabel) {
+            var result = { account: null, anchorVisible: lastVisibleY >= 0 };
+            if (!candidates.length) return result;
             if (lastVisibleY >= 0) {
+                var nearest = null;
+                var nearestGap = 99999;
                 for (var i = 0; i < candidates.length; i++) {
-                    if (candidates[i].centerY > lastVisibleY + config.accountNextRowGap) {
-                        return candidates[i];
+                    var gap = candidates[i].centerY - lastVisibleY;
+                    if (gap > config.accountNextRowGap && gap < nearestGap) {
+                        nearest = candidates[i];
+                        nearestGap = gap;
                     }
                 }
-                return null;
+                if (nearest && nearestGap <= (config.accountNextMaxGap || 180)) {
+                    log("选择上次账号下方最近一行：" + lastAccountLabel + " -> " + nearest.label + " gap=" + nearestGap);
+                    result.account = nearest;
+                    return result;
+                }
+                if (nearest) {
+                    log("下方最近账号距离过大，继续小幅下滑：" + lastAccountLabel + " -> " + nearest.label + " gap=" + nearestGap);
+                } else {
+                    log("未找到紧挨上次账号的完整下一行，继续小幅下滑：" + lastAccountLabel);
+                }
+                return result;
             }
-            return candidates[0];
+            if (lastAccountLabel) {
+                log("本屏未看到上次账号锚点，继续小幅下滑寻找：" + lastAccountLabel);
+                return result;
+            }
+            result.account = candidates[0];
+            return result;
         }
-        
+
         function rememberProcessedAccount(processedMap, processedLabels, label) {
             var key = textUtils.normalizeRecordKey(label);
             if (!key) return;
+            var alreadyProcessed = isProcessedAccount(processedMap, processedLabels, label);
             processedMap[key] = true;
-            if (!isProcessedAccount(processedLabels, label)) {
+            if (!alreadyProcessed) {
                 processedLabels.push(label);
             }
         }
-        
-        function isProcessedAccount(processedLabels, label) {
+
+        function isProcessedAccount(processedMap, processedLabels, label) {
             var key = textUtils.normalizeRecordKey(label);
             if (!key) return true;
+            if (processedMap && processedMap[key]) return true;
             for (var i = 0; i < processedLabels.length; i++) {
                 if (sameAccountLabel(processedLabels[i], label)) return true;
             }
             return false;
         }
-        
+
         function sameAccountLabel(a, b) {
             var ak = textUtils.normalizeRecordKey(a);
             var bk = textUtils.normalizeRecordKey(b);
@@ -1654,7 +2010,7 @@
             }
             return textUtils.charOverlapRatio(ak, bk) >= 0.92;
         }
-        
+
         function isFollowingListPage(ocrResult) {
             var items = (ocrResult && ocrResult.items) || [];
             var joined = items.map(function (item) {
@@ -1664,7 +2020,7 @@
             if (joined.indexOf("关注") >= 0 && joined.indexOf("已关注") < 0 && joined.indexOf("私信") < 0) return true;
             return accountParser.extractFollowTotal(ocrResult) > 0;
         }
-        
+
         function captureAndCheckFollowingList() {
             var img = screen.ensureCapture();
             if (!img) return null;
@@ -1673,7 +2029,7 @@
             img.recycle();
             return ok;
         }
-        
+
         function returnToFollowingList() {
             for (var i = 0; i < config.finishBackMaxSteps; i++) {
                 var check = captureAndCheckFollowingList();
@@ -1701,7 +2057,7 @@
             warn("收尾: 未能确认回到关注列表");
             return false;
         }
-        
+
         function scrollFollowingListToTop() {
             log("收尾: 尝试回到关注列表顶部");
             for (var i = 0; i < config.finishScrollTopSwipes; i++) {
@@ -1710,7 +2066,7 @@
             }
             log("收尾: 已执行顶部回滚手势 " + config.finishScrollTopSwipes + " 次");
         }
-        
+
         function finishRun(summary) {
             if (summary && summary.endedOnFollowingList) {
                 log("收尾: 主流程结束时已在关注列表，原因=" + summary.endReason);
@@ -1721,26 +2077,26 @@
                 scrollFollowingListToTop();
             }
         }
-        
+
         function main() {
             console.show();
             log("启动关注账号剧集采集");
             log("CSV路径：" + config.csvFile);
-        
+
             screen.initCapture();
-        
+
             var outputRecords = [];
             var observedRecords = [];
             var summary = collectAccountsOnce(outputRecords, observedRecords);
-        
+
             finishRun(summary);
-        
+
             if (outputRecords.length === 0) {
                 log("没有新增剧集记录");
             } else {
                 log("本地新增剧集记录 " + outputRecords.length + " 条");
             }
-        
+
             if (observedRecords.length > 0) {
                 // 上报本轮识别到的全部记录，由后端统一去重、入库和通知。
                 var backendResult = reporter.reportToBackend(observedRecords, summary);
@@ -1756,18 +2112,18 @@
             } else {
                 log("本轮没有可上报的剧集识别结果");
             }
-        
+
             // 发送心跳
             reporter.sendHeartbeat("idle");
-        
+
             log("采集结束：遍历账号 " + summary.scannedCount
                 + " 个，成功 " + summary.successCount
                 + " 个，失败 " + summary.failCount
                 + " 个，新增记录 " + outputRecords.length + " 条");
         }
-        
+
         main();
-        
+
     };
 
     __phase3Require('main.js');

@@ -16,20 +16,23 @@ function extractCompleteCardTitles(items, screenHeight) {
         var label = text.clean(items[i].label || "");
         if (!label || (b.top || 0) <= tabBottom) continue;
 
-        var inlineTitle = extractInlineTitleBeforeEpisode(label);
+        var inlineTitle = extractInlineTitleBeforeEpisode(label, false);
         if (inlineTitle) {
             episodeItems.push({
                 text: label,
                 title: inlineTitle,
+                shortInlineTitle: "",
                 x: centerX(b),
                 y: b.top || 0,
                 bounds: b,
                 inline: true
             });
-        } else if (/^\d+\s*集$/.test(label)) {
+        } else if (hasEpisodeCountLabel(label)) {
+            var shortInlineTitle = extractInlineTitleBeforeEpisode(label, true);
             episodeItems.push({
                 text: label,
                 title: "",
+                shortInlineTitle: shortInlineTitle,
                 x: centerX(b),
                 y: b.top || 0,
                 bounds: b,
@@ -44,7 +47,7 @@ function extractCompleteCardTitles(items, screenHeight) {
     var seen = {};
     for (var e = 0; e < episodeItems.length; e++) {
         var episode = episodeItems[e];
-        var title = episode.title || titleAboveEpisode(items, episode, tabBottom);
+        var title = episode.title || titleAboveEpisode(items, episode, tabBottom, episode.shortInlineTitle);
         title = cleanSeriesTitle(title);
         if (!title || !isSeriesTitleCandidate(title)) continue;
 
@@ -69,7 +72,7 @@ function findSeriesContentTop(items, screenHeight) {
     return tabBottom + 40;
 }
 
-function titleAboveEpisode(items, episode, tabBottom) {
+function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
     var titleParts = [];
     var minY = Math.max(tabBottom, episode.y - 180);
     var maxY = episode.y + 4;
@@ -80,13 +83,13 @@ function titleAboveEpisode(items, episode, tabBottom) {
         var b = items[i].bounds || {};
         var label = text.clean(items[i].label || "");
         if (!label) continue;
-        if (/^\d+\s*集$/.test(label)) continue;
+        if (hasEpisodeCountLabel(label)) continue;
         if (text.isTabText(label)) continue;
 
         var top = b.top || 0;
         if (top < minY || top > maxY) continue;
         if (Math.abs(centerX(b) - columnCenter) > columnHalfWidth) continue;
-        if (text.countChineseChars(text.stripPunct(label)) < 2) continue;
+        if (!isTitlePartCandidate(label, b, episode)) continue;
 
         titleParts.push({ text: label, y: top, x: b.left || 0 });
     }
@@ -95,36 +98,82 @@ function titleAboveEpisode(items, episode, tabBottom) {
         if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
         return a.x - b.x;
     });
-    return titleParts.map(function(item) { return item.text; }).join("");
+    var title = titleParts.map(function(item) { return item.text; }).join("");
+    if (shortInlineTitle && title.indexOf(shortInlineTitle) < 0) {
+        title += shortInlineTitle;
+    }
+    return title;
 }
 
-function extractInlineTitleBeforeEpisode(label) {
+function extractInlineTitleBeforeEpisode(label, allowShort) {
     var cleanLabel = text.clean(label).replace(/\s+/g, "");
     var match = cleanLabel.match(/^(.+?)(\d{1,3})集$/);
     if (!match) return "";
 
     var title = match[1];
     if (/^\d+$/.test(title)) return "";
-    if (text.countChineseChars(text.stripPunct(title)) < 2) return "";
+    var chineseCount = text.countChineseChars(text.stripPunct(title));
+    if (chineseCount < 2) {
+        return allowShort && chineseCount === 1 ? title : "";
+    }
     return title;
 }
 
+function hasEpisodeCountLabel(label) {
+    label = text.clean(label).replace(/\s+/g, "");
+    return /^\d{1,3}集$/.test(label) || /^.+?\d{1,3}集$/.test(label);
+}
+
+function isTitlePartCandidate(label, bounds, episode) {
+    var cleanLabel = text.toSimplified(text.clean(label)).replace(/\s+/g, "");
+    var compact = text.stripPunct(cleanLabel).replace(/[\-—–_~·•《》「」『』【】]/g, "");
+    var chineseCount = text.countChineseChars(compact);
+    if (chineseCount >= 2) return true;
+    if (chineseCount !== 1) return false;
+    if (/^(集|第|共|全|更|赞|评|分|私|信)$/.test(compact)) return false;
+    if (/^[\-—–_~·•.。:：，,、]+$/.test(cleanLabel)) return false;
+    var bottom = Number(bounds.bottom || bounds.top || 0);
+    var gap = episode.y - bottom;
+    return gap >= -8 && gap <= 95;
+}
+
 function cleanSeriesTitle(title) {
-    return text.clean(title)
+    title = text.applyKnownOcrCorrections(title);
+    title = extractDecoratedTitle(title);
+    title = text.toSimplified(text.clean(title))
         .replace(/\s+/g, "")
         .replace(/^\d+/, "")
-        .replace(/[，,。；;：:、]+$/g, "");
+        .replace(/[《》「」『』【】]/g, "")
+        .replace(/^[\-—–_~·•.。:：，,、]+/, "")
+        .replace(/[\-—–_~·•.。；;：:，,、]+$/g, "");
+    if (text.hasTraditionalChinese(title)) return "";
+    return title;
 }
 
 function isSeriesTitleCandidate(title) {
+    title = text.toSimplified(text.clean(title));
+    if (text.hasTraditionalChinese(title)) return false;
     var compact = text.stripPunct(title);
+    compact = compact.replace(/[\-—–_~·•《》「」『』【】]/g, "");
     if (!compact || compact.length < 2 || compact.length > 40) return false;
     if (text.countChineseChars(compact) < 2) return false;
+    if (/^[\-—–_~·•]+$/.test(title)) return false;
     if (/^\d+$/.test(compact)) return false;
     if (/^\d+集$/.test(compact)) return false;
     if (/^(主页|视频|剧集|全部|私信|已关注|原创内容)$/.test(compact)) return false;
     if (/^(赞|评论|转发|搜索|更多|返回)$/.test(compact)) return false;
     return true;
+}
+
+function extractDecoratedTitle(title) {
+    title = text.clean(title);
+    var match = title.match(/《([^》]{2,40})》/);
+    if (match) return match[1];
+    match = title.match(/「([^」]{2,40})」/);
+    if (match) return match[1];
+    match = title.match(/『([^』]{2,40})』/);
+    if (match) return match[1];
+    return title;
 }
 
 function mergeAndDedup(existing, newNames) {

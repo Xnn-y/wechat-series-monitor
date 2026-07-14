@@ -57,7 +57,11 @@ function collectSeries(initialPage) {
         }
 
         log("剧集未满 " + config.maxSeries + " 个，向下滑动继续识别");
-        screen.scrollDown();
+        if (newCount === 0) {
+            screen.scrollDownSeriesMore();
+        } else {
+            screen.scrollDown();
+        }
         sleep(config.scrollWait);
     }
 
@@ -103,6 +107,7 @@ function collectAccount(account, outputRecords, observedRecords) {
         clickResult.img.getHeight(),
         account.label
     );
+    profileAccountName = pickTrustedProfileAccountName(account.label, profileAccountName);
     if (profileAccountName && profileAccountName !== account.label) {
         log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
     }
@@ -133,6 +138,26 @@ function collectAccount(account, outputRecords, observedRecords) {
     return true;
 }
 
+function pickTrustedProfileAccountName(listName, profileName) {
+    listName = accountParser.cleanAccountLabel(listName || "");
+    profileName = accountParser.cleanAccountLabel(profileName || "");
+    if (!profileName || profileName === listName) return listName;
+    if (textUtils.hasTraditionalChinese(profileName)) {
+        log("主页账号名含繁体，保留列表名：" + listName + " / " + profileName);
+        return listName;
+    }
+    if (accountParser.hasNoisyAccountChars(profileName)) {
+        log("主页账号名疑似误识别，保留列表名：" + listName + " / " + profileName);
+        return listName;
+    }
+    var similarity = textUtils.similarityRatio(listName, profileName);
+    if (similarity < (config.profileNameOverrideSimilarity || 0.78)) {
+        log("主页账号名与列表名不一致，保留列表名：" + listName + " / " + profileName + " similarity=" + Math.round(similarity * 100));
+        return listName;
+    }
+    return profileName;
+}
+
 function collectAccountsOnce(outputRecords, observedRecords) {
     var processedAccounts = {};
     var processedAccountLabels = [];
@@ -141,7 +166,8 @@ function collectAccountsOnce(outputRecords, observedRecords) {
     var successCount = 0;
     var failCount = 0;
     var emptyPages = 0;
-    var skippedTopOnce = false;
+    var anchorSeekPages = 0;
+    var revealNextPages = 0;
     var targetAccountCount = 0;
     var endedOnFollowingList = true;
     var endReason = "unknown";
@@ -173,32 +199,63 @@ function collectAccountsOnce(outputRecords, observedRecords) {
 
         var targetAccount = null;
         var candidates = [];
+        var knownCandidates = [];
         var lastVisibleY = -1;
-        visibleAccounts.forEach(function (account, index) {
-            if (!skippedTopOnce && index === 0) {
-                log("跳过关注列表首项：" + account.label);
-                rememberProcessedAccount(processedAccounts, processedAccountLabels, account.label);
-                skippedTopOnce = true;
-                return;
-            }
-
+        visibleAccounts.forEach(function (account) {
             if (sameAccountLabel(account.label, lastAccountLabel)) {
                 lastVisibleY = account.centerY;
             }
 
-            if (isProcessedAccount(processedAccountLabels, account.label)) {
+            if (isProcessedAccount(processedAccounts, processedAccountLabels, account.label)) {
                 return;
             }
 
             candidates.push(account);
+            if (textUtils.isKnownAccountName(account.label)) {
+                knownCandidates.push(account);
+            }
         });
 
         log("关注列表第 " + (step + 1) + " 次扫描，识别账号："
             + visibleAccounts.map(function (item) { return item.label; }).join(" | "));
 
-        targetAccount = pickNextAccount(candidates, lastVisibleY);
+        if (config.allowUnknownAccounts !== true && knownCandidates.length < candidates.length) {
+            log("忽略非标准账号候选：" + candidates.filter(function (item) {
+                return !textUtils.isKnownAccountName(item.label);
+            }).map(function (item) { return item.label; }).join(" | "));
+        }
+
+        var pickCandidates = (config.allowUnknownAccounts === true && knownCandidates.length === 0)
+            ? candidates
+            : knownCandidates;
+        var pickResult = pickNextAccount(pickCandidates, lastVisibleY, lastAccountLabel);
+        targetAccount = pickResult.account;
 
         if (!targetAccount) {
+            if (lastAccountLabel) {
+                if (pickResult.anchorVisible) {
+                    anchorSeekPages = 0;
+                    revealNextPages++;
+                    if (revealNextPages >= (config.maxRevealNextPages || 5)) {
+                        warn("连续无法露出上次账号后的下一行，按关注列表已到底处理：" + lastAccountLabel);
+                        endReason = "reached_list_bottom";
+                        break;
+                    }
+                    log("上次账号仍在屏幕内但下一行未完整露出，继续下滑露出下一账号：" + lastAccountLabel);
+                    screen.scrollDownRevealNextAccount();
+                    sleep(config.scrollWait);
+                    continue;
+                }
+                anchorSeekPages++;
+                if (anchorSeekPages >= (config.maxAnchorSeekPages || 8)) {
+                    warn("连续找不到上次账号锚点，结束遍历：" + lastAccountLabel);
+                    endReason = "anchor_lost";
+                    break;
+                }
+                screen.scrollDownSmall();
+                sleep(config.scrollWait);
+                continue;
+            }
             emptyPages++;
             if (emptyPages >= config.maxEmptyAccountPages) {
                 log("连续没有新账号，结束关注列表遍历");
@@ -211,6 +268,8 @@ function collectAccountsOnce(outputRecords, observedRecords) {
         }
 
         emptyPages = 0;
+        anchorSeekPages = 0;
+        revealNextPages = 0;
         rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
         lastAccountLabel = targetAccount.label;
         scannedCount++;
@@ -231,31 +290,53 @@ function collectAccountsOnce(outputRecords, observedRecords) {
     };
 }
 
-function pickNextAccount(candidates, lastVisibleY) {
-    if (!candidates.length) return null;
+function pickNextAccount(candidates, lastVisibleY, lastAccountLabel) {
+    var result = { account: null, anchorVisible: lastVisibleY >= 0 };
+    if (!candidates.length) return result;
     if (lastVisibleY >= 0) {
+        var nearest = null;
+        var nearestGap = 99999;
         for (var i = 0; i < candidates.length; i++) {
-            if (candidates[i].centerY > lastVisibleY + config.accountNextRowGap) {
-                return candidates[i];
+            var gap = candidates[i].centerY - lastVisibleY;
+            if (gap > config.accountNextRowGap && gap < nearestGap) {
+                nearest = candidates[i];
+                nearestGap = gap;
             }
         }
-        return null;
+        if (nearest && nearestGap <= (config.accountNextMaxGap || 180)) {
+            log("选择上次账号下方最近一行：" + lastAccountLabel + " -> " + nearest.label + " gap=" + nearestGap);
+            result.account = nearest;
+            return result;
+        }
+        if (nearest) {
+            log("下方最近账号距离过大，继续小幅下滑：" + lastAccountLabel + " -> " + nearest.label + " gap=" + nearestGap);
+        } else {
+            log("未找到紧挨上次账号的完整下一行，继续小幅下滑：" + lastAccountLabel);
+        }
+        return result;
     }
-    return candidates[0];
+    if (lastAccountLabel) {
+        log("本屏未看到上次账号锚点，继续小幅下滑寻找：" + lastAccountLabel);
+        return result;
+    }
+    result.account = candidates[0];
+    return result;
 }
 
 function rememberProcessedAccount(processedMap, processedLabels, label) {
     var key = textUtils.normalizeRecordKey(label);
     if (!key) return;
+    var alreadyProcessed = isProcessedAccount(processedMap, processedLabels, label);
     processedMap[key] = true;
-    if (!isProcessedAccount(processedLabels, label)) {
+    if (!alreadyProcessed) {
         processedLabels.push(label);
     }
 }
 
-function isProcessedAccount(processedLabels, label) {
+function isProcessedAccount(processedMap, processedLabels, label) {
     var key = textUtils.normalizeRecordKey(label);
     if (!key) return true;
+    if (processedMap && processedMap[key]) return true;
     for (var i = 0; i < processedLabels.length; i++) {
         if (sameAccountLabel(processedLabels[i], label)) return true;
     }
