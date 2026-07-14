@@ -84,7 +84,7 @@
             indexFile: joinPath(dataDir, "series_index.json"),
             backend: {
                 enabled: true,
-                serverUrl: "http://8.163.72.189:8082",
+                serverUrl: "http://atool.fz-ue.com",
                 collectorToken: "wm_20260710_server_x9Kp72Qz"
             }
         };
