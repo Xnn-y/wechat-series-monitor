@@ -36,6 +36,16 @@ docs/
 
 旧路线、探测脚本、历史快照已经放在本地归档目录中，不再作为当前主线维护。
 
+## 当前线上入口
+
+```text
+微信剧集监控后台：http://atool.fz-ue.com/dashboard
+健康检查：http://atool.fz-ue.com/health
+手机端上报：http://atool.fz-ue.com/api/collect
+```
+
+当前服务器上，`atool.fz-ue.com` 的 80 端口用于微信剧集监控；图鸭项目保留裸 IP + 独立端口访问，不再占用这个域名。
+
 ## 手机端运行
 
 修改 `src/phase3/` 后，先重新生成 AutoJs6 单文件：
@@ -119,9 +129,12 @@ server/data/collector.test.db
 
 ```text
 APP_ENV=production
-DATABASE_URL=sqlite:////opt/series-monitor/server/data/collector.prod.db
+DATABASE_URL=sqlite:////opt/wechat-series-monitor/server/data/collector.prod.db
+PUBLIC_BASE_URL=http://atool.fz-ue.com
+DEVICE_OFFLINE_MINUTES=150
 COLLECTOR_TOKEN=change_me
 ADMIN_PASSWORD=change_me
+VIEWER_PASSWORD=change_me
 WECOM_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...
 ```
 
@@ -130,10 +143,12 @@ AutoJs6 端需要把 `src/phase3/config.js` 里的后端地址改成服务器地
 ```javascript
 backend: {
     enabled: true,
-    serverUrl: "https://your-domain.example",
+    serverUrl: "http://atool.fz-ue.com",
     collectorToken: "same_token_as_server"
 }
 ```
+
+`WECOM_WEBHOOK_URL` 是企业微信群机器人通知地址。采集入库出现新增剧集时，后端会通过它发送通知；它不是手机端启动脚本的触发 webhook。
 
 ## Git 约定
 

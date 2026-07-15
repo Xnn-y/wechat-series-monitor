@@ -5,13 +5,21 @@
 当前部署条件：
 
 - 服务器系统：Ubuntu
-- 访问方式：先用服务器 IP + 独立端口访问
+- 访问方式：域名 `http://atool.fz-ue.com` 访问微信剧集监控
 - 示例服务器 IP：`8.163.72.189`
 - 仓库状态：GitHub 私有仓库
 - 当前服务器已有项目：
-  - Nginx 已占用外部 `80`、`8081`
-  - 已有项目内部监听 `127.0.0.1:8080`
-  - 本项目使用内部 `127.0.0.1:5001`，外部 `8082`
+  - 微信剧集监控内部监听 `127.0.0.1:5001`，外部使用域名默认 `80` 端口
+  - 图鸭项目内部监听 `127.0.0.1:8080`
+  - 图鸭项目外部保留裸 IP 端口 `8081`、`8082`
+
+当前端口关系：
+
+```text
+http://atool.fz-ue.com/        -> Nginx 80 -> 127.0.0.1:5001 微信剧集监控
+http://8.163.72.189:8081/      -> 图鸭 admin_web
+http://8.163.72.189:8082/      -> 图鸭 custom_web
+```
 
 ## 1. 本地提交并推送代码
 
@@ -74,13 +82,16 @@ nano server/.env
 ```env
 APP_ENV=production
 DATABASE_URL=sqlite:////opt/wechat-series-monitor/server/data/collector.prod.db
-PUBLIC_BASE_URL=http://8.163.72.189:8082
+PUBLIC_BASE_URL=http://atool.fz-ue.com
 DEVICE_OFFLINE_MINUTES=150
 
 COLLECTOR_TOKEN=换成一串强随机token
 ADMIN_PASSWORD=换成后台登录密码
+VIEWER_PASSWORD=换成只读查看密码
 WECOM_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的企业微信机器人key
 ```
+
+`WECOM_WEBHOOK_URL` 用于企业微信群机器人通知。后端在 `/api/collect` 收到新增剧集并成功入库后，会通过这个 webhook 推送本轮新增摘要。
 
 ## 6. 测试后端能否启动
 
@@ -156,12 +167,12 @@ sudo journalctl -u wechat-series-monitor -f
 sudo nano /etc/nginx/sites-available/wechat-series-monitor
 ```
 
-写入。当前服务器的 `80` 和 `8081` 已被已有项目使用，本项目先使用外部端口 `8082`：
+写入。当前域名 `atool.fz-ue.com` 走微信剧集监控；图鸭项目继续用裸 IP + `8081`、`8082`：
 
 ```nginx
 server {
-    listen 8082;
-    server_name _;
+    listen 80;
+    server_name atool.fz-ue.com;
 
     location / {
         proxy_pass http://127.0.0.1:5001;
@@ -184,28 +195,28 @@ sudo systemctl reload nginx
 访问：
 
 ```text
-http://8.163.72.189/dashboard
+http://atool.fz-ue.com/dashboard
 ```
 
-本项目实际访问地址：
+兼容旧登录路径：
 
 ```text
-http://8.163.72.189:8082/dashboard
+http://atool.fz-ue.com/login
 ```
 
 ## 9. HTTPS
 
-当前没有域名，先跳过 HTTPS。等以后有域名并解析到服务器后，再安装证书：
+当前先使用 HTTP。以后如果要给 `atool.fz-ue.com` 配 HTTPS，再安装证书：
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d 你的域名
+sudo certbot --nginx -d atool.fz-ue.com
 ```
 
 完成后访问：
 
 ```text
-https://你的域名/dashboard
+https://atool.fz-ue.com/dashboard
 ```
 
 ## 10. Auto.js 配置
@@ -215,7 +226,7 @@ https://你的域名/dashboard
 ```js
 backend: {
     enabled: true,
-    serverUrl: "http://8.163.72.189:8082",
+    serverUrl: "http://atool.fz-ue.com",
     collectorToken: "和服务器 COLLECTOR_TOKEN 一样"
 }
 ```
@@ -300,8 +311,8 @@ git push
 
 部署后逐项验证：
 
-1. `http://8.163.72.189:8082/health` 返回 `ok: true`
-2. `http://8.163.72.189:8082/dashboard` 可以打开登录页
+1. `http://atool.fz-ue.com/health` 返回 `ok: true`
+2. `http://atool.fz-ue.com/dashboard` 可以打开登录页
 3. 输入 `ADMIN_PASSWORD` 可以登录
 4. 企业微信通知里后台链接可以打开
 5. 手机 Auto.js 上报后，后台“最近采集”出现新轮次
