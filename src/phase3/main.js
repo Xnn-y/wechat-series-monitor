@@ -428,6 +428,13 @@ function main() {
     log("启动关注账号剧集采集");
     log("CSV路径：" + config.csvFile);
 
+    var standardAccounts = reporter.fetchStandardAccounts();
+    if (textUtils.setKnownAccountNames(standardAccounts)) {
+        log("标准账号库已更新：" + textUtils.getKnownAccountNames().length + " 个");
+    } else {
+        log("使用内置标准账号库：" + textUtils.getKnownAccountNames().length + " 个");
+    }
+
     screen.initCapture();
 
     var outputRecords = [];

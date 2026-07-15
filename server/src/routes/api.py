@@ -5,7 +5,7 @@ import os
 from functools import wraps
 from flask import Blueprint, request, jsonify, Response, send_from_directory
 from src.config.settings import settings
-from src.db import get_connection, DB_PATH
+from src.db import get_connection, DB_PATH, normalize_standard_account_name
 from src.services import (
     process_collect,
     sanitize_series_title,
@@ -55,6 +55,24 @@ def require_admin(f):
         if req_pwd and req_pwd == admin_pwd:
             return f(*args, **kwargs)
         return jsonify({"ok": False, "error": "admin password required"}), 401
+    return wrapper
+
+
+def require_viewer_or_token(f):
+    """查看者权限或采集端 Token，用于手机端同步标准账号库。"""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get("X-Collector-Token", "")
+        if token and token == settings.COLLECTOR_TOKEN:
+            return f(*args, **kwargs)
+
+        req_pwd = request.headers.get("X-Admin-Password", "")
+        admin_pwd = (settings.ADMIN_PASSWORD or "").strip()
+        viewer_pwd = (settings.VIEWER_PASSWORD or "").strip()
+        if req_pwd == admin_pwd or (viewer_pwd and req_pwd == viewer_pwd):
+            return f(*args, **kwargs)
+
+        return jsonify({"ok": False, "error": "password or token required"}), 401
     return wrapper
 
 
@@ -363,6 +381,85 @@ def heartbeat():
 def health_check():
     result = run_health_check()
     return jsonify(result)
+
+
+# ============================================================
+# GET /api/standard-accounts - 查询标准关注账号库
+# ============================================================
+@api.route("/api/standard-accounts", methods=["GET"])
+@require_viewer_or_token
+def get_standard_accounts():
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, name, normalized_name, created_by, created_at
+               FROM standard_accounts
+               WHERE active = 1
+               ORDER BY id ASC"""
+        ).fetchall()
+        accounts = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    return jsonify({
+        "ok": True,
+        "total": len(accounts),
+        "accounts": accounts,
+        "names": [a["name"] for a in accounts],
+    })
+
+
+# ============================================================
+# POST /api/standard-accounts - 添加标准关注账号
+# ============================================================
+@api.route("/api/standard-accounts", methods=["POST"])
+@require_admin
+def create_standard_account():
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    normalized_name = normalize_standard_account_name(name)
+
+    if not normalized_name:
+        return jsonify({"ok": False, "error": "账号名不能为空"}), 400
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO standard_accounts
+               (name, normalized_name, active, created_by)
+               VALUES (?, ?, 1, 'manual')
+               ON CONFLICT(normalized_name) DO UPDATE SET
+                   name = excluded.name,
+                   active = 1,
+                   created_by = 'manual'""",
+            (name, normalized_name),
+        )
+        conn.commit()
+        row = conn.execute(
+            """SELECT id, name, normalized_name, created_by, created_at
+               FROM standard_accounts
+               WHERE normalized_name = ?""",
+            (normalized_name,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    return jsonify({"ok": True, "account": dict(row) if row else None})
+
+
+# ============================================================
+# DELETE /api/standard-accounts/<int:account_id> - 删除标准账号
+# ============================================================
+@api.route("/api/standard-accounts/<int:account_id>", methods=["DELETE"])
+@require_admin
+def delete_standard_account(account_id):
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE standard_accounts SET active = 0 WHERE id = ?", (account_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True})
 
 
 # ============================================================

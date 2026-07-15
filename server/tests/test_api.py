@@ -54,8 +54,47 @@ def test_collect_no_token():
     print(f"  [PASS] 无Token -> 401")
 
 
+def test_standard_accounts():
+    """3. 标准账号库查询与维护"""
+    app = create_app()
+    client = app.test_client()
+
+    blocked = client.get("/api/standard-accounts")
+    assert blocked.status_code == 401
+
+    resp = client.get(
+        "/api/standard-accounts",
+        headers={"X-Collector-Token": "dev_token"},
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    names = data["names"]
+    assert "鬼谷剧场" in names
+    assert "白脸蛋剧场" in names
+    assert "金天漫剧" in names
+    assert "陈先生勒剧场" in names
+    assert "新想象AI短剧" in names
+
+    resp2 = client.post(
+        "/api/standard-accounts",
+        json={"name": "测试标准账号"},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp2.status_code == 200
+    created = resp2.get_json()["account"]
+    assert created["name"] == "测试标准账号"
+
+    resp3 = client.delete(
+        f"/api/standard-accounts/{created['id']}",
+        headers=ADMIN_HEADERS,
+    )
+    assert resp3.status_code == 200
+    assert resp3.get_json()["ok"] is True
+    print("  [PASS] 标准账号库 -> token 查询/admin 增删")
+
+
 def test_collect_with_token():
-    """3. 正常上报（含 Token）"""
+    """4. 正常上报（含 Token）"""
     app = create_app()
     client = app.test_client()
 
@@ -86,7 +125,7 @@ def test_collect_with_token():
 
 
 def test_dedup():
-    """4. 重复上报不应新增"""
+    """5. 重复上报不应新增"""
     app = create_app()
     client = app.test_client()
 
@@ -113,7 +152,7 @@ def test_dedup():
 
 
 def test_normalization_dedup():
-    """5. 归一化去重：空格/标点差异应视为重复"""
+    """6. 归一化去重：空格/标点差异应视为重复"""
     app = create_app()
     client = app.test_client()
 
@@ -140,7 +179,7 @@ def test_normalization_dedup():
 
 
 def test_series_title_symbol_sanitize():
-    """6. 剧名只保留逗号、冒号这两类符号"""
+    """7. 剧名只保留逗号、冒号这两类符号"""
     app = create_app()
     client = app.test_client()
 
@@ -176,7 +215,7 @@ def test_series_title_symbol_sanitize():
 
 
 def test_get_records():
-    """7. 查询记录"""
+    """8. 查询记录"""
     app = create_app()
     client = app.test_client()
 
@@ -206,7 +245,7 @@ def test_get_records():
 
 
 def test_get_runs():
-    """8. 查询采集轮次"""
+    """9. 查询采集轮次"""
     app = create_app()
     client = app.test_client()
 
@@ -219,7 +258,7 @@ def test_get_runs():
 
 
 def test_get_summary():
-    """9. 团队后台总览"""
+    """10. 团队后台总览"""
     app = create_app()
     client = app.test_client()
 
@@ -239,7 +278,7 @@ def test_get_summary():
 
 
 def test_export_csv():
-    """10. CSV 导出"""
+    """11. CSV 导出"""
     app = create_app()
     client = app.test_client()
 
@@ -255,6 +294,7 @@ if __name__ == "__main__":
     setup_module()
     test_health()
     test_collect_no_token()
+    test_standard_accounts()
     test_collect_with_token()
     test_dedup()
     test_normalization_dedup()
@@ -263,4 +303,4 @@ if __name__ == "__main__":
     test_get_runs()
     test_get_summary()
     test_export_csv()
-    print("\n===== 全部 10 项测试通过 ✅ =====")
+    print("\n===== 全部 11 项测试通过 ✅ =====")

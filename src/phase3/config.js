@@ -47,7 +47,7 @@ var config = {
     accountSafeTopRatio: 0.16,
     accountSafeBottomRatio: 0.97,
     accountTextMinXRatio: 0.16,
-    allowUnknownAccounts: true,
+    allowUnknownAccounts: false,
     profileNameOverrideSimilarity: 0.92,
     finishBackMaxSteps: 4,
     finishScrollTopSwipes: 8,

@@ -73,7 +73,7 @@
             accountSafeTopRatio: 0.16,
             accountSafeBottomRatio: 0.97,
             accountTextMinXRatio: 0.16,
-            allowUnknownAccounts: true,
+            allowUnknownAccounts: false,
             profileNameOverrideSimilarity: 0.92,
             finishBackMaxSteps: 4,
             finishScrollTopSwipes: 8,
@@ -236,8 +236,39 @@
             "甜文禁",
             "柒柒书漫",
             "天使不会哭呀",
-            "金森文化"
+            "金森文化",
+            "白脸蛋剧场",
+            "金天漫剧",
+            "逐梦漫剧",
+            "娃娃漫剧",
+            "啵啵漫剧",
+            "陈先生勒剧场",
+            "新想象短剧",
+            "新想象AI剧场",
+            "新想象AI短剧"
         ];
+
+        function setKnownAccountNames(names) {
+            if (!names || !names.length) return false;
+
+            var next = [];
+            var seen = {};
+            for (var i = 0; i < names.length; i++) {
+                var name = clean(toSimplified(names[i] || ""));
+                var key = normalizeRecordKey(name);
+                if (!name || !key || seen[key]) continue;
+                seen[key] = true;
+                next.push(name);
+            }
+
+            if (!next.length) return false;
+            KNOWN_ACCOUNT_NAMES = next;
+            return true;
+        }
+
+        function getKnownAccountNames() {
+            return KNOWN_ACCOUNT_NAMES.slice();
+        }
 
         function applyKnownOcrCorrections(s) {
             s = String(s || "");
@@ -404,6 +435,8 @@
             sanitizeSeriesTitleSymbols: sanitizeSeriesTitleSymbols,
             normalizeRecordKey: normalizeRecordKey,
             applyKnownOcrCorrections: applyKnownOcrCorrections,
+            setKnownAccountNames: setKnownAccountNames,
+            getKnownAccountNames: getKnownAccountNames,
             canonicalizeKnownAccountName: canonicalizeKnownAccountName,
             isKnownAccountName: isKnownAccountName,
             normalizeOcrConfusions: normalizeOcrConfusions,
@@ -1503,6 +1536,50 @@
         var config = require("./config.js");
         var time = require("./time.js");
 
+        function readResponseBody(res) {
+            try {
+                if (typeof res.body === "function") {
+                    return res.body().string();
+                }
+                if (typeof res.body === "object" && res.body.string) {
+                    return res.body.string();
+                }
+                return String(res.body || "");
+            } catch (e) {
+                return "[无法读取响应体]";
+            }
+        }
+
+        function fetchStandardAccounts() {
+            if (config.backend && config.backend.enabled === false) return [];
+
+            var serverUrl = (config.backend && config.backend.serverUrl) || "";
+            var token = (config.backend && config.backend.collectorToken) || "";
+            if (!serverUrl || !token) return [];
+
+            var url = serverUrl.replace(/\/+$/, "") + "/api/standard-accounts";
+            try {
+                var res = http.get(url, {
+                    headers: {
+                        "X-Collector-Token": token
+                    }
+                });
+                var statusCode = res.statusCode || 0;
+                var bodyText = readResponseBody(res);
+                if (statusCode !== 200) {
+                    log("[标准账号] 同步失败: HTTP " + statusCode + " " + bodyText);
+                    return [];
+                }
+                var data = JSON.parse(bodyText);
+                var names = data.names || [];
+                log("[标准账号] 已同步 " + names.length + " 个账号");
+                return names;
+            } catch (e) {
+                log("[标准账号] 同步异常，使用内置账号库: " + e);
+                return [];
+            }
+        }
+
         /**
          * 上报本轮采集结果到后端
          * @param {Array} outputRecords - [{account, series, collectTime}, ...]
@@ -1593,18 +1670,7 @@
                 }
 
                 var statusCode = res.statusCode || 0;
-                var bodyText = "";
-                try {
-                    if (typeof res.body === "function") {
-                        bodyText = res.body().string();
-                    } else if (typeof res.body === "object" && res.body.string) {
-                        bodyText = res.body.string();
-                    } else {
-                        bodyText = String(res.body || "");
-                    }
-                } catch (e) {
-                    bodyText = "[无法读取响应体]";
-                }
+                var bodyText = readResponseBody(res);
 
                 log("[上报] HTTP " + statusCode + ": " + bodyText);
 
@@ -1677,6 +1743,7 @@
 
         module.exports = {
             reportToBackend: reportToBackend,
+            fetchStandardAccounts: fetchStandardAccounts,
             sendHeartbeat: sendHeartbeat
         };
 
@@ -2112,6 +2179,13 @@
             console.show();
             log("启动关注账号剧集采集");
             log("CSV路径：" + config.csvFile);
+
+            var standardAccounts = reporter.fetchStandardAccounts();
+            if (textUtils.setKnownAccountNames(standardAccounts)) {
+                log("标准账号库已更新：" + textUtils.getKnownAccountNames().length + " 个");
+            } else {
+                log("使用内置标准账号库：" + textUtils.getKnownAccountNames().length + " 个");
+            }
 
             screen.initCapture();
 

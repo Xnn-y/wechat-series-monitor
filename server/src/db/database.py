@@ -1,6 +1,7 @@
 """server/src/db/database.py - SQLite 数据库初始化"""
 import sqlite3
 import os
+import re
 from urllib.parse import unquote
 
 from src.config.settings import settings
@@ -29,6 +30,46 @@ DB_PATH = resolve_sqlite_path(settings.DATABASE_URL)
 DB_DIR = os.path.dirname(DB_PATH)
 
 os.makedirs(DB_DIR, exist_ok=True)
+
+DEFAULT_STANDARD_ACCOUNTS = [
+    "鬼谷剧场",
+    "虾仁无下限",
+    "西柚虾",
+    "江十三动画",
+    "米糕短剧",
+    "微码剧场",
+    "漫绘短剧社",
+    "微时光短剧场",
+    "欢乐时光短剧场",
+    "美好时光短剧场",
+    "快乐时光短剧场",
+    "漫剧放映屋剧场",
+    "漫剧星隅剧场",
+    "漫剧拾光剧场",
+    "玲和美",
+    "阿文爱看剧",
+    "萌萌虎剧场",
+    "玖爱看漫剧",
+    "超爽漫剧",
+    "甜文禁",
+    "柒柒书漫",
+    "天使不会哭呀",
+    "金森文化",
+    "白脸蛋剧场",
+    "金天漫剧",
+    "逐梦漫剧",
+    "娃娃漫剧",
+    "啵啵漫剧",
+    "陈先生勒剧场",
+    "新想象短剧",
+    "新想象AI剧场",
+    "新想象AI短剧",
+]
+
+
+def normalize_standard_account_name(name: str) -> str:
+    """Normalize a standard account name for duplicate checks."""
+    return re.sub(r"[\u3000\s]+", "", str(name or "")).strip().lower()
 
 
 def get_connection() -> sqlite3.Connection:
@@ -131,6 +172,30 @@ def init_db():
             FOREIGN KEY (device_name) REFERENCES devices(name)
         )
     """)
+
+    # ---- 标准关注账号库 ----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS standard_accounts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL UNIQUE,
+            normalized_name TEXT NOT NULL UNIQUE,
+            active          INTEGER DEFAULT 1,
+            created_by      TEXT DEFAULT 'seed',
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    try:
+        cursor.execute("ALTER TABLE standard_accounts ADD COLUMN active INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+
+    for name in DEFAULT_STANDARD_ACCOUNTS:
+        cursor.execute(
+            """INSERT OR IGNORE INTO standard_accounts
+               (name, normalized_name, active, created_by)
+               VALUES (?, ?, 1, 'seed')""",
+            (name, normalize_standard_account_name(name)),
+        )
 
     conn.commit()
     conn.close()

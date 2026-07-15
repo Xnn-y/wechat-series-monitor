@@ -8,6 +8,50 @@
 var config = require("./config.js");
 var time = require("./time.js");
 
+function readResponseBody(res) {
+    try {
+        if (typeof res.body === "function") {
+            return res.body().string();
+        }
+        if (typeof res.body === "object" && res.body.string) {
+            return res.body.string();
+        }
+        return String(res.body || "");
+    } catch (e) {
+        return "[无法读取响应体]";
+    }
+}
+
+function fetchStandardAccounts() {
+    if (config.backend && config.backend.enabled === false) return [];
+
+    var serverUrl = (config.backend && config.backend.serverUrl) || "";
+    var token = (config.backend && config.backend.collectorToken) || "";
+    if (!serverUrl || !token) return [];
+
+    var url = serverUrl.replace(/\/+$/, "") + "/api/standard-accounts";
+    try {
+        var res = http.get(url, {
+            headers: {
+                "X-Collector-Token": token
+            }
+        });
+        var statusCode = res.statusCode || 0;
+        var bodyText = readResponseBody(res);
+        if (statusCode !== 200) {
+            log("[标准账号] 同步失败: HTTP " + statusCode + " " + bodyText);
+            return [];
+        }
+        var data = JSON.parse(bodyText);
+        var names = data.names || [];
+        log("[标准账号] 已同步 " + names.length + " 个账号");
+        return names;
+    } catch (e) {
+        log("[标准账号] 同步异常，使用内置账号库: " + e);
+        return [];
+    }
+}
+
 /**
  * 上报本轮采集结果到后端
  * @param {Array} outputRecords - [{account, series, collectTime}, ...]
@@ -98,18 +142,7 @@ function reportToBackend(outputRecords, summary) {
         }
 
         var statusCode = res.statusCode || 0;
-        var bodyText = "";
-        try {
-            if (typeof res.body === "function") {
-                bodyText = res.body().string();
-            } else if (typeof res.body === "object" && res.body.string) {
-                bodyText = res.body.string();
-            } else {
-                bodyText = String(res.body || "");
-            }
-        } catch (e) {
-            bodyText = "[无法读取响应体]";
-        }
+        var bodyText = readResponseBody(res);
 
         log("[上报] HTTP " + statusCode + ": " + bodyText);
 
@@ -182,5 +215,6 @@ function sendHeartbeat(status) {
 
 module.exports = {
     reportToBackend: reportToBackend,
+    fetchStandardAccounts: fetchStandardAccounts,
     sendHeartbeat: sendHeartbeat
 };

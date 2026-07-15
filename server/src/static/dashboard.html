@@ -131,11 +131,12 @@
   }
   .filter-group { display: flex; flex-direction: column; gap: 4px; }
   .filter-group label { font-size: .78rem; color: var(--text-secondary); font-weight: 600; }
-  .filter-group input {
+  .filter-group input, .filter-group select {
     padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
     font-size: .88rem; outline: none; min-width: 140px;
+    background: #fff;
   }
-  .filter-group input:focus { border-color: var(--primary); }
+  .filter-group input:focus, .filter-group select:focus { border-color: var(--primary); }
   .filters button {
     padding: 7px 16px; border: none; border-radius: 6px; font-size: .88rem;
     cursor: pointer; font-weight: 600; transition: opacity .15s;
@@ -273,7 +274,9 @@
     <div class="filters">
       <div class="filter-group">
         <label>账号</label>
-        <input type="text" id="filterAccount" placeholder="搜索账号名...">
+        <select id="filterAccount">
+          <option value="">全部账号</option>
+        </select>
       </div>
       <div class="filter-group">
         <label>剧名</label>
@@ -290,6 +293,7 @@
       <button class="btn-search" onclick="search()">🔍 查询</button>
       <button class="btn-export" onclick="exportCsv()">📥 导出CSV</button>
       <button class="btn-reset" onclick="resetFilters()">↺ 重置</button>
+      <button class="btn-reset" id="standardAccountBtn" onclick="toggleStandardAccountPanel()" style="display:none;">账号库</button>
     </div>
 
     <!-- 快速日期选择 -->
@@ -320,6 +324,20 @@
       <div id="aliasList" style="width:100%;max-height:200px;overflow-y:auto;margin-top:8px;font-size:.82rem;"></div>
     </div>
 
+    <!-- 标准账号库管理 -->
+    <div class="filters" id="standardAccountPanel" style="display:none;">
+      <div style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <strong style="font-size:.9rem;">标准账号库</strong>
+        <button onclick="toggleStandardAccountPanel()" style="border:none;background:none;cursor:pointer;font-size:1.2rem;">×</button>
+      </div>
+      <div class="filter-group">
+        <label>账号名</label>
+        <input type="text" id="standardAccountName" placeholder="输入账号名">
+      </div>
+      <button class="btn-search" onclick="addStandardAccount()">添加账号</button>
+      <div id="standardAccountList" style="width:100%;max-height:260px;overflow-y:auto;margin-top:8px;font-size:.82rem;"></div>
+    </div>
+
     <!-- 表格 -->
     <div class="table-wrap" id="tableWrap">
       <p class="loading">加载中...</p>
@@ -336,6 +354,7 @@ let currentFilters = {};
 let currentHighlightRunId = "";
 let latestRunId = "";
 let userRole = "";  // "admin" | "viewer"
+let standardAccounts = [];
 const PAGE_SIZE = 20;
 
 // ===== 登录 =====
@@ -415,7 +434,12 @@ function init() {
   setDefaultDateFilters();
   loadStats();
   loadDateChips();
-  search();
+  if (userRole === "admin") {
+    document.getElementById("standardAccountBtn").style.display = "";
+  }
+  loadStandardAccounts().then(function() {
+    search();
+  });
 }
 
 function getHeaders() {
@@ -604,6 +628,104 @@ function formatDateInput(d) {
 function formatTime(t) {
   if (!t) return "-";
   return t.replace("T", " ").substring(0, 19);
+}
+
+// ===== 标准账号库 =====
+function loadStandardAccounts() {
+  return fetch(API_BASE + "/api/standard-accounts", { headers: getHeaders() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) return;
+      standardAccounts = d.accounts || [];
+      renderAccountFilter();
+      renderStandardAccountList();
+    })
+    .catch(function() {
+      standardAccounts = [];
+      renderAccountFilter();
+    });
+}
+
+function renderAccountFilter() {
+  var select = document.getElementById("filterAccount");
+  if (!select) return;
+  var current = select.value;
+  var html = '<option value="">全部账号</option>';
+  standardAccounts.forEach(function(a) {
+    html += '<option value="' + escAttr(a.name) + '">' + esc(a.name) + '</option>';
+  });
+  select.innerHTML = html;
+  select.value = current;
+}
+
+function toggleStandardAccountPanel() {
+  var panel = document.getElementById("standardAccountPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+  if (panel.style.display !== "none") {
+    loadStandardAccounts();
+  }
+}
+
+function addStandardAccount() {
+  var input = document.getElementById("standardAccountName");
+  var name = input.value.trim();
+  if (!name) { alert("请填写账号名"); return; }
+
+  fetch(API_BASE + "/api/standard-accounts", {
+    method: "POST",
+    headers: Object.assign({ "Content-Type": "application/json" }, getHeaders()),
+    body: JSON.stringify({ name: name })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      input.value = "";
+      loadStandardAccounts();
+    } else {
+      alert("添加失败: " + (d.error || ""));
+    }
+  });
+}
+
+function deleteStandardAccount(id) {
+  var name = "";
+  for (var i = 0; i < standardAccounts.length; i++) {
+    if (standardAccounts[i].id === id) {
+      name = standardAccounts[i].name;
+      break;
+    }
+  }
+  if (!confirm("确认删除标准账号：" + name + "？")) return;
+  fetch(API_BASE + "/api/standard-accounts/" + id, {
+    method: "DELETE",
+    headers: getHeaders()
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      loadStandardAccounts();
+      if (document.getElementById("filterAccount").value === name) {
+        document.getElementById("filterAccount").value = "";
+        search(1);
+      }
+    } else {
+      alert("删除失败");
+    }
+  });
+}
+
+function renderStandardAccountList() {
+  var el = document.getElementById("standardAccountList");
+  if (!el) return;
+  if (!standardAccounts.length) {
+    el.innerHTML = "<p style='color:var(--text-secondary);text-align:center;padding:12px;'>暂无标准账号</p>";
+    return;
+  }
+
+  var html = "<table style='width:100%;margin-top:8px;'><thead><tr><th>账号</th><th>来源</th><th>操作</th></tr></thead><tbody>";
+  standardAccounts.forEach(function(a) {
+    html += "<tr><td>" + esc(a.name) + "</td><td>" + esc(a.created_by || "-") + "</td><td>" +
+      "<button onclick='deleteStandardAccount(" + a.id + ")' style='color:var(--danger);border:none;background:none;cursor:pointer;'>删除</button>" +
+      "</td></tr>";
+  });
+  html += "</tbody></table>";
+  el.innerHTML = html;
 }
 
 // ===== 日期芯片 =====

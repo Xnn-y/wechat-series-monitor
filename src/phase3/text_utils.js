@@ -140,8 +140,39 @@ var KNOWN_ACCOUNT_NAMES = [
     "甜文禁",
     "柒柒书漫",
     "天使不会哭呀",
-    "金森文化"
+    "金森文化",
+    "白脸蛋剧场",
+    "金天漫剧",
+    "逐梦漫剧",
+    "娃娃漫剧",
+    "啵啵漫剧",
+    "陈先生勒剧场",
+    "新想象短剧",
+    "新想象AI剧场",
+    "新想象AI短剧"
 ];
+
+function setKnownAccountNames(names) {
+    if (!names || !names.length) return false;
+
+    var next = [];
+    var seen = {};
+    for (var i = 0; i < names.length; i++) {
+        var name = clean(toSimplified(names[i] || ""));
+        var key = normalizeRecordKey(name);
+        if (!name || !key || seen[key]) continue;
+        seen[key] = true;
+        next.push(name);
+    }
+
+    if (!next.length) return false;
+    KNOWN_ACCOUNT_NAMES = next;
+    return true;
+}
+
+function getKnownAccountNames() {
+    return KNOWN_ACCOUNT_NAMES.slice();
+}
 
 function applyKnownOcrCorrections(s) {
     s = String(s || "");
@@ -308,6 +339,8 @@ module.exports = {
     sanitizeSeriesTitleSymbols: sanitizeSeriesTitleSymbols,
     normalizeRecordKey: normalizeRecordKey,
     applyKnownOcrCorrections: applyKnownOcrCorrections,
+    setKnownAccountNames: setKnownAccountNames,
+    getKnownAccountNames: getKnownAccountNames,
     canonicalizeKnownAccountName: canonicalizeKnownAccountName,
     isKnownAccountName: isKnownAccountName,
     normalizeOcrConfusions: normalizeOcrConfusions,
