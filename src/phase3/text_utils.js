@@ -6,6 +6,34 @@ function stripPunct(s) {
     return String(s || "").replace(/[,，。.、；;：:！!？?""''（）()【】\[\]\s]/g, "");
 }
 
+function sanitizeSeriesTitleSymbols(s) {
+    s = String(s || "")
+        .replace(/，/g, ",")
+        .replace(/：/g, ":");
+
+    var result = "";
+    for (var i = 0; i < s.length; i++) {
+        var ch = s.charAt(i);
+        var code = s.charCodeAt(i);
+        if (ch === "," || ch === ":") {
+            result += ch;
+        } else if ((code >= 0x30 && code <= 0x39) ||
+                   (code >= 0x41 && code <= 0x5A) ||
+                   (code >= 0x61 && code <= 0x7A) ||
+                   (code >= 0x4E00 && code <= 0x9FFF) ||
+                   (code >= 0x3400 && code <= 0x4DBF) ||
+                   (code >= 0xF900 && code <= 0xFAFF)) {
+            result += ch;
+        }
+    }
+
+    return result
+        .replace(/^[,:]+/, "")
+        .replace(/[,:]+$/, "")
+        .replace(/,{2,}/g, ",")
+        .replace(/:{2,}/g, ":");
+}
+
 var TRAD_TO_SIMP = (function() {
     var pairs = [
         [0x7D05,0x7EA2],[0x9580,0x95E8],[0x898B,0x89C1],[0x99AC,0x9A6C],[0x98A8,0x98CE],[0x8ECA,0x8F66],
@@ -277,6 +305,7 @@ module.exports = {
     countChineseChars: countChineseChars,
     hasChinese: hasChinese,
     charOverlapRatio: charOverlapRatio,
+    sanitizeSeriesTitleSymbols: sanitizeSeriesTitleSymbols,
     normalizeRecordKey: normalizeRecordKey,
     applyKnownOcrCorrections: applyKnownOcrCorrections,
     canonicalizeKnownAccountName: canonicalizeKnownAccountName,

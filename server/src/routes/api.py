@@ -6,7 +6,13 @@ from functools import wraps
 from flask import Blueprint, request, jsonify, Response, send_from_directory
 from src.config.settings import settings
 from src.db import get_connection, DB_PATH
-from src.services import process_collect, send_new_records_notification, record_heartbeat, run_health_check
+from src.services import (
+    process_collect,
+    sanitize_series_title,
+    send_new_records_notification,
+    record_heartbeat,
+    run_health_check,
+)
 
 api = Blueprint("api", __name__)
 
@@ -430,7 +436,7 @@ def delete_ocr_alias(alias_id):
 def update_record(record_id):
     payload = request.get_json(silent=True) or {}
     account_raw = (payload.get("account_name_raw") or "").strip()
-    series_raw = (payload.get("series_name_raw") or "").strip()
+    series_raw = sanitize_series_title(payload.get("series_name_raw") or "")
     episodes = (payload.get("episodes_raw") or "").strip()
 
     if not account_raw or not series_raw:

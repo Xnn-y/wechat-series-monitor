@@ -17,6 +17,29 @@ def normalize_text(text: str) -> str:
     return text.lower()
 
 
+def sanitize_series_title(text: str) -> str:
+    """剧名只保留中文、字母、数字、逗号和冒号。"""
+    if not text:
+        return ""
+
+    text = str(text).strip().replace("，", ",").replace("：", ":")
+    chars = []
+    for ch in text:
+        code = ord(ch)
+        if ch in {",", ":"}:
+            chars.append(ch)
+        elif "0" <= ch <= "9" or "A" <= ch <= "Z" or "a" <= ch <= "z":
+            chars.append(ch)
+        elif 0x4E00 <= code <= 0x9FFF or 0x3400 <= code <= 0x4DBF or 0xF900 <= code <= 0xFAFF:
+            chars.append(ch)
+
+    cleaned = "".join(chars)
+    cleaned = re.sub(r"^[,:]+|[,:]+$", "", cleaned)
+    cleaned = re.sub(r",{2,}", ",", cleaned)
+    cleaned = re.sub(r":{2,}", ":", cleaned)
+    return cleaned
+
+
 def apply_ocr_aliases(text: str, field_type: str) -> str:
     """查 ocr_aliases 表，用修正后的文本替换 OCR 错误"""
     conn = get_connection()
@@ -104,7 +127,7 @@ def process_collect(payload: dict) -> dict:
 
             # OCR 别名修正
             account_corrected = apply_ocr_aliases(account_raw, "account")
-            series_corrected = apply_ocr_aliases(series_raw, "series")
+            series_corrected = sanitize_series_title(apply_ocr_aliases(series_raw, "series"))
 
             # 归一化
             account_norm = normalize_text(account_corrected)
@@ -119,7 +142,7 @@ def process_collect(payload: dict) -> dict:
                        (run_id, account_name_raw, series_name_raw, episodes_raw,
                         account_name_normalized, series_name_normalized, collected_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (run_id, account_raw, series_raw, episodes_raw,
+                    (run_id, account_raw, series_corrected, episodes_raw,
                      account_norm, series_norm, collected_at),
                 )
                 inserted += 1

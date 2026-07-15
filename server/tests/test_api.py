@@ -139,8 +139,44 @@ def test_normalization_dedup():
     print(f"  [PASS] 归一化去重 -> inserted=0 duplicates=1 (空格被归一化)")
 
 
+def test_series_title_symbol_sanitize():
+    """6. 剧名只保留逗号、冒号这两类符号"""
+    app = create_app()
+    client = app.test_client()
+
+    payload = {
+        "device": "test_phone_01",
+        "run_id": "20260709_test_symbols",
+        "started_at": "2026-07-09 16:30:00",
+        "finished_at": "2026-07-09 16:35:00",
+        "records": [
+            {"account_name": "江十三动画", "series_name": "|不再回头高价抢莓后,全村慌了", "episodes": "", "collected_at": "2026-07-09 16:31:00"},
+            {"account_name": "江十三动画", "series_name": "人/离如婚自由|余额反转全家赶我走那天,我含泪看了眼余额", "episodes": "", "collected_at": "2026-07-09 16:32:00"},
+            {"account_name": "江十三动画", "series_name": "讨情三万八,女屠户把破猪|场干成金饭碗", "episodes": "", "collected_at": "2026-07-09 16:33:00"},
+        ],
+    }
+
+    resp = client.post(
+        "/api/collect",
+        json=payload,
+        headers={"X-Collector-Token": "dev_token"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["inserted"] == 3
+
+    resp2 = client.get("/api/records?run_id=20260709_test_symbols", headers=ADMIN_HEADERS)
+    records = resp2.get_json()["records"]
+    names = {r["series_name_raw"] for r in records}
+    assert "不再回头高价抢莓后,全村慌了" in names
+    assert "人离如婚自由余额反转全家赶我走那天,我含泪看了眼余额" in names
+    assert "讨情三万八,女屠户把破猪场干成金饭碗" in names
+    assert all("|" not in name and "/" not in name for name in names)
+    print("  [PASS] 剧名符号清洗 -> 仅保留逗号和冒号")
+
+
 def test_get_records():
-    """6. 查询记录"""
+    """7. 查询记录"""
     app = create_app()
     client = app.test_client()
 
@@ -170,7 +206,7 @@ def test_get_records():
 
 
 def test_get_runs():
-    """7. 查询采集轮次"""
+    """8. 查询采集轮次"""
     app = create_app()
     client = app.test_client()
 
@@ -183,7 +219,7 @@ def test_get_runs():
 
 
 def test_get_summary():
-    """8. 团队后台总览"""
+    """9. 团队后台总览"""
     app = create_app()
     client = app.test_client()
 
@@ -203,7 +239,7 @@ def test_get_summary():
 
 
 def test_export_csv():
-    """8. CSV 导出"""
+    """10. CSV 导出"""
     app = create_app()
     client = app.test_client()
 
@@ -222,8 +258,9 @@ if __name__ == "__main__":
     test_collect_with_token()
     test_dedup()
     test_normalization_dedup()
+    test_series_title_symbol_sanitize()
     test_get_records()
     test_get_runs()
     test_get_summary()
     test_export_csv()
-    print("\n===== 全部 9 项测试通过 ✅ =====")
+    print("\n===== 全部 10 项测试通过 ✅ =====")

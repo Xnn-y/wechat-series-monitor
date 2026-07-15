@@ -146,6 +146,7 @@ function cleanSeriesTitle(title) {
         .replace(/[《》「」『』【】]/g, "")
         .replace(/^[\-—–_~·•.。:：，,、]+/, "")
         .replace(/[\-—–_~·•.。；;：:，,、]+$/g, "");
+    title = text.sanitizeSeriesTitleSymbols(title);
     if (text.hasTraditionalChinese(title)) return "";
     return title;
 }
