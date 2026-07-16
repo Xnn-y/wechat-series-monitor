@@ -154,6 +154,7 @@ function isProfileNameCandidate(label) {
 function hasNoisyAccountChars(label) {
     label = text.clean(label);
     if (!label) return true;
+    if (text.isKnownAccountName(label)) return false;
     if (/^[A-Za-z0-9_.-]{2,24}$/.test(label)) return false;
     if (/[()（）0-9]/.test(label)) return true;
     if (/[A-Za-z]/.test(label) && text.countChineseChars(label) >= 2) return true;

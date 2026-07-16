@@ -70,7 +70,7 @@ function clickSeriesTab(initialImg, ocrRunner) {
     for (var i = 0; i < (ocrResult.items || []).length; i++) {
         var label = text.clean(ocrResult.items[i].label || "");
         var bounds = ocrResult.items[i].bounds || {};
-        if (label.indexOf("剧集") >= 0 && isTabBounds(bounds, w, h)) {
+        if (isSeriesTabCandidate(label, bounds, w, h, ocrResult.items || [])) {
             var score = tabScore(label);
             if (!best || score > best.score) {
                 var point = tabClickPoint(label, bounds);
@@ -105,6 +105,35 @@ function clickSeriesTab(initialImg, ocrRunner) {
 
     if (ownsImage) img.recycle();
     return { success: false };
+}
+
+function isSeriesTabCandidate(label, bounds, w, h, items) {
+    var cleanLabel = text.clean(label).replace(/\s+/g, "");
+    if (cleanLabel.indexOf("剧集") < 0) return false;
+    if (!isTabBounds(bounds, w, h)) return false;
+    if (/剧集[（(]?\d+/.test(cleanLabel)) return false;
+    if (/^剧集/.test(cleanLabel) && hasSameRowText(items, bounds, "全部")) return false;
+    if (cleanLabel === "剧集") return true;
+    if (cleanLabel.indexOf("主页") >= 0 || cleanLabel.indexOf("视频") >= 0) return true;
+    return hasSameRowText(items, bounds, "主页") || hasSameRowText(items, bounds, "视频");
+}
+
+function hasSameRowText(items, bounds, expected) {
+    var top = Number(bounds.top || 0);
+    var bottom = Number(bounds.bottom || top);
+    var centerY = (top + bottom) / 2;
+    for (var i = 0; i < (items || []).length; i++) {
+        var item = items[i] || {};
+        var b = item.bounds || {};
+        if (b === bounds) continue;
+        var label = text.clean(item.label || "").replace(/\s+/g, "");
+        if (label.indexOf(expected) < 0) continue;
+        var itemTop = Number(b.top || 0);
+        var itemBottom = Number(b.bottom || itemTop);
+        var itemCenterY = (itemTop + itemBottom) / 2;
+        if (Math.abs(itemCenterY - centerY) <= 36) return true;
+    }
+    return false;
 }
 
 function tabScore(label) {

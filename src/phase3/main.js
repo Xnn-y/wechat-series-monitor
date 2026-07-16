@@ -348,6 +348,7 @@ function sameAccountLabel(a, b) {
     var bk = textUtils.normalizeRecordKey(b);
     if (!ak || !bk) return false;
     if (ak === bk) return true;
+    if (textUtils.isKnownAccountName(a) && textUtils.isKnownAccountName(b)) return false;
     if (ak.length >= 3 && bk.length >= 3) {
         var shorter = ak.length <= bk.length ? ak : bk;
         var longer = ak.length <= bk.length ? bk : ak;
