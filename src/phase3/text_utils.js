@@ -187,6 +187,9 @@ function applyKnownOcrCorrections(s) {
         .replace(/超爽浸剧/g, "超爽漫剧")
         .replace(/超爽漫剧妙/g, "超爽漫剧")
         .replace(/起爽/g, "超爽")
+        .replace(/金天浸剧/g, "金天漫剧")
+        .replace(/破破漫剧/g, "啵啵漫剧")
+        .replace(/破暖漫剧/g, "啵啵漫剧")
         .replace(/西袖虾/g, "西柚虾")
         .replace(/阿女爱看剧/g, "阿文爱看剧")
         .replace(/甜女禁/g, "甜文禁")
@@ -211,17 +214,22 @@ function canonicalizeKnownAccountName(s) {
 
     var bestName = "";
     var bestScore = 0;
+    var secondScore = 0;
     for (var i = 0; i < KNOWN_ACCOUNT_NAMES.length; i++) {
         var known = KNOWN_ACCOUNT_NAMES[i];
         var knownKey = normalizeRecordKey(known);
         var score = accountNameMatchScore(key, knownKey);
         if (score > bestScore) {
+            secondScore = bestScore;
             bestScore = score;
             bestName = known;
+        } else if (score > secondScore) {
+            secondScore = score;
         }
     }
 
     if (bestScore >= 0.78) return bestName;
+    if (isSafeFuzzyAccountMatch(key, normalizeRecordKey(bestName), bestScore, secondScore)) return bestName;
     return corrected;
 }
 
@@ -247,6 +255,23 @@ function accountNameMatchScore(key, knownKey) {
     var overlap = plainOverlapRatio(key, knownKey);
     var edit = editSimilarity(key, knownKey);
     return overlap * 0.45 + edit * 0.55;
+}
+
+function isSafeFuzzyAccountMatch(key, knownKey, bestScore, secondScore) {
+    if (!key || !knownKey) return false;
+    if (bestScore < 0.74) return false;
+    if (Math.abs(key.length - knownKey.length) > 1) return false;
+    if (bestScore - secondScore < 0.08) return false;
+    if (key.length <= 4 && bestScore < 0.74) return false;
+    if (key.length > 4 && bestScore < 0.76) return false;
+    return sameAccountTail(key, knownKey);
+}
+
+function sameAccountTail(a, b) {
+    if (a.length < 2 || b.length < 2) return false;
+    var tailA = a.slice(-2);
+    var tailB = b.slice(-2);
+    return tailA === tailB;
 }
 
 function plainOverlapRatio(a, b) {
@@ -292,6 +317,7 @@ function normalizeOcrConfusions(s) {
     return String(s || "")
         .replace(/孑/g, "子")
         .replace(/妳/g, "你")
+        .replace(/夭/g, "天")
         .replace(/[丨|]/g, "1")
         .replace(/[〇○]/g, "0");
 }

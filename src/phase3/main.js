@@ -112,7 +112,7 @@ function collectAccount(account, outputRecords, observedRecords) {
         log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
     }
 
-    var tabResult = actions.clickSeriesTab(clickResult.img, ocr);
+    var tabResult = actions.clickSeriesTab(clickResult.img, ocr, { accountLabel: account.label });
     clickResult.img.recycle();
     if (!tabResult.success) {
         warn("未找到剧集Tab，跳过：" + account.label);

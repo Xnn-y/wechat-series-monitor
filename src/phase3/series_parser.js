@@ -91,9 +91,15 @@ function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
         if (Math.abs(centerX(b) - columnCenter) > columnHalfWidth) continue;
         if (!isTitlePartCandidate(label, b, episode)) continue;
 
-        titleParts.push({ text: label, y: top, x: b.left || 0 });
+        titleParts.push({
+            text: label,
+            y: top,
+            bottom: Number(b.bottom || top),
+            x: b.left || 0
+        });
     }
 
+    titleParts = nearestTitleRows(titleParts, episode);
     titleParts.sort(function(a, b) {
         if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
         return a.x - b.x;
@@ -103,6 +109,64 @@ function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
         title += shortInlineTitle;
     }
     return title;
+}
+
+function nearestTitleRows(titleParts, episode) {
+    if (!titleParts.length) return titleParts;
+
+    var rows = [];
+    var sorted = titleParts.slice().sort(function(a, b) {
+        if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
+        return a.x - b.x;
+    });
+
+    for (var i = 0; i < sorted.length; i++) {
+        var item = sorted[i];
+        var last = rows.length ? rows[rows.length - 1] : null;
+        if (!last || Math.abs(item.y - last.y) > 24) {
+            rows.push({
+                y: item.y,
+                bottom: item.bottom,
+                height: Math.max(1, item.bottom - item.y),
+                items: [item]
+            });
+        } else {
+            last.bottom = Math.max(last.bottom, item.bottom);
+            last.height = Math.max(last.height, Math.max(1, item.bottom - item.y));
+            last.items.push(item);
+        }
+    }
+
+    var bestIndex = -1;
+    var bestGap = 99999;
+    for (var r = 0; r < rows.length; r++) {
+        var gap = episode.y - rows[r].bottom;
+        if (gap >= -8 && gap <= 125 && gap < bestGap) {
+            bestGap = gap;
+            bestIndex = r;
+        }
+    }
+    if (bestIndex < 0) return titleParts;
+
+    var selected = [rows[bestIndex]];
+    var anchorHeight = Math.max(1, rows[bestIndex].height || (rows[bestIndex].bottom - rows[bestIndex].y));
+    for (var p = bestIndex - 1; p >= 0; p--) {
+        var distanceToSelected = selected[0].y - rows[p].bottom;
+        var distanceToEpisode = episode.y - rows[p].bottom;
+        var rowHeight = Math.max(1, rows[p].height || (rows[p].bottom - rows[p].y));
+        if (distanceToSelected > 58 || distanceToEpisode > 150) break;
+        if (rowHeight < anchorHeight * 0.68) break;
+        selected.unshift(rows[p]);
+    }
+
+    var result = [];
+    for (var s = 0; s < selected.length; s++) {
+        selected[s].items.sort(function(a, b) { return a.x - b.x; });
+        for (var j = 0; j < selected[s].items.length; j++) {
+            result.push(selected[s].items[j]);
+        }
+    }
+    return result;
 }
 
 function extractInlineTitleBeforeEpisode(label, allowShort) {

@@ -283,6 +283,9 @@
                 .replace(/超爽浸剧/g, "超爽漫剧")
                 .replace(/超爽漫剧妙/g, "超爽漫剧")
                 .replace(/起爽/g, "超爽")
+                .replace(/金天浸剧/g, "金天漫剧")
+                .replace(/破破漫剧/g, "啵啵漫剧")
+                .replace(/破暖漫剧/g, "啵啵漫剧")
                 .replace(/西袖虾/g, "西柚虾")
                 .replace(/阿女爱看剧/g, "阿文爱看剧")
                 .replace(/甜女禁/g, "甜文禁")
@@ -307,17 +310,22 @@
 
             var bestName = "";
             var bestScore = 0;
+            var secondScore = 0;
             for (var i = 0; i < KNOWN_ACCOUNT_NAMES.length; i++) {
                 var known = KNOWN_ACCOUNT_NAMES[i];
                 var knownKey = normalizeRecordKey(known);
                 var score = accountNameMatchScore(key, knownKey);
                 if (score > bestScore) {
+                    secondScore = bestScore;
                     bestScore = score;
                     bestName = known;
+                } else if (score > secondScore) {
+                    secondScore = score;
                 }
             }
 
             if (bestScore >= 0.78) return bestName;
+            if (isSafeFuzzyAccountMatch(key, normalizeRecordKey(bestName), bestScore, secondScore)) return bestName;
             return corrected;
         }
 
@@ -343,6 +351,23 @@
             var overlap = plainOverlapRatio(key, knownKey);
             var edit = editSimilarity(key, knownKey);
             return overlap * 0.45 + edit * 0.55;
+        }
+
+        function isSafeFuzzyAccountMatch(key, knownKey, bestScore, secondScore) {
+            if (!key || !knownKey) return false;
+            if (bestScore < 0.74) return false;
+            if (Math.abs(key.length - knownKey.length) > 1) return false;
+            if (bestScore - secondScore < 0.08) return false;
+            if (key.length <= 4 && bestScore < 0.74) return false;
+            if (key.length > 4 && bestScore < 0.76) return false;
+            return sameAccountTail(key, knownKey);
+        }
+
+        function sameAccountTail(a, b) {
+            if (a.length < 2 || b.length < 2) return false;
+            var tailA = a.slice(-2);
+            var tailB = b.slice(-2);
+            return tailA === tailB;
         }
 
         function plainOverlapRatio(a, b) {
@@ -388,6 +413,7 @@
             return String(s || "")
                 .replace(/孑/g, "子")
                 .replace(/妳/g, "你")
+                .replace(/夭/g, "天")
                 .replace(/[丨|]/g, "1")
                 .replace(/[〇○]/g, "0");
         }
@@ -873,9 +899,15 @@
                 if (Math.abs(centerX(b) - columnCenter) > columnHalfWidth) continue;
                 if (!isTitlePartCandidate(label, b, episode)) continue;
 
-                titleParts.push({ text: label, y: top, x: b.left || 0 });
+                titleParts.push({
+                    text: label,
+                    y: top,
+                    bottom: Number(b.bottom || top),
+                    x: b.left || 0
+                });
             }
 
+            titleParts = nearestTitleRows(titleParts, episode);
             titleParts.sort(function(a, b) {
                 if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
                 return a.x - b.x;
@@ -885,6 +917,64 @@
                 title += shortInlineTitle;
             }
             return title;
+        }
+
+        function nearestTitleRows(titleParts, episode) {
+            if (!titleParts.length) return titleParts;
+
+            var rows = [];
+            var sorted = titleParts.slice().sort(function(a, b) {
+                if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
+                return a.x - b.x;
+            });
+
+            for (var i = 0; i < sorted.length; i++) {
+                var item = sorted[i];
+                var last = rows.length ? rows[rows.length - 1] : null;
+                if (!last || Math.abs(item.y - last.y) > 24) {
+                    rows.push({
+                        y: item.y,
+                        bottom: item.bottom,
+                        height: Math.max(1, item.bottom - item.y),
+                        items: [item]
+                    });
+                } else {
+                    last.bottom = Math.max(last.bottom, item.bottom);
+                    last.height = Math.max(last.height, Math.max(1, item.bottom - item.y));
+                    last.items.push(item);
+                }
+            }
+
+            var bestIndex = -1;
+            var bestGap = 99999;
+            for (var r = 0; r < rows.length; r++) {
+                var gap = episode.y - rows[r].bottom;
+                if (gap >= -8 && gap <= 125 && gap < bestGap) {
+                    bestGap = gap;
+                    bestIndex = r;
+                }
+            }
+            if (bestIndex < 0) return titleParts;
+
+            var selected = [rows[bestIndex]];
+            var anchorHeight = Math.max(1, rows[bestIndex].height || (rows[bestIndex].bottom - rows[bestIndex].y));
+            for (var p = bestIndex - 1; p >= 0; p--) {
+                var distanceToSelected = selected[0].y - rows[p].bottom;
+                var distanceToEpisode = episode.y - rows[p].bottom;
+                var rowHeight = Math.max(1, rows[p].height || (rows[p].bottom - rows[p].y));
+                if (distanceToSelected > 58 || distanceToEpisode > 150) break;
+                if (rowHeight < anchorHeight * 0.68) break;
+                selected.unshift(rows[p]);
+            }
+
+            var result = [];
+            for (var s = 0; s < selected.length; s++) {
+                selected[s].items.sort(function(a, b) { return a.x - b.x; });
+                for (var j = 0; j < selected[s].items.length; j++) {
+                    result.push(selected[s].items[j]);
+                }
+            }
+            return result;
         }
 
         function extractInlineTitleBeforeEpisode(label, allowShort) {
@@ -1377,71 +1467,74 @@
             return false;
         }
 
-        function clickSeriesTab(initialImg, ocrRunner) {
+        function clickSeriesTab(initialImg, ocrRunner, options) {
+            options = options || {};
+            var forceClickTab = shouldForceClickSeriesTab(options.accountLabel);
             sleep(config.pageDelay);
 
-            var img = initialImg || null;
-            if (!img) {
-                img = screen.retryCapture(5, 500);
+            var attempts = Math.max(1, config.seriesTabFindTries || 3);
+            for (var attempt = 0; attempt < attempts; attempt++) {
+                var img = screen.retryCapture(attempt === 0 ? 5 : 2, 500);
+                if (!img && attempt === 0) img = initialImg || null;
                 if (!img) warn("剧集Tab截图失败");
-                if (!img) return false;
-            }
-            var ownsImage = img !== initialImg;
+                if (!img) continue;
 
-            var w = img.getWidth();
-            var h = img.getHeight();
-            var ocrResult = ocrRunner.ocrScreen(img, null, "tab");
+                var ownsImage = img !== initialImg;
+                var w = img.getWidth();
+                var h = img.getHeight();
+                var ocrResult = ocrRunner.ocrScreen(img, null, "tab");
 
-            if (looksLikeSeriesPage(ocrResult, w, h)) {
-                log("当前已在剧集页，跳过Tab点击，直接读取");
-                if (ownsImage) img.recycle();
-                return {
-                    success: true,
-                    alreadySeriesPage: true,
-                    firstPageOcr: ocrResult,
-                    firstPageHeight: h
-                };
-            }
+                if (looksLikeSeriesPage(ocrResult, w, h) && !forceClickTab) {
+                    log("当前已在剧集页，跳过Tab点击，直接读取");
+                    if (ownsImage) img.recycle();
+                    return {
+                        success: true,
+                        alreadySeriesPage: true,
+                        firstPageOcr: ocrResult,
+                        firstPageHeight: h
+                    };
+                } else if (looksLikeSeriesPage(ocrResult, w, h) && forceClickTab) {
+                    log("账号要求强制点击剧集Tab，忽略已在剧集页判断：" + options.accountLabel);
+                }
 
-            var best = null;
-            for (var i = 0; i < (ocrResult.items || []).length; i++) {
-                var label = text.clean(ocrResult.items[i].label || "");
-                var bounds = ocrResult.items[i].bounds || {};
-                if (isSeriesTabCandidate(label, bounds, w, h, ocrResult.items || [])) {
-                    var score = tabScore(label);
-                    if (!best || score > best.score) {
-                        var point = tabClickPoint(label, bounds);
-                        best = {
-                            label: label,
-                            score: score,
-                            x: point.x,
-                            y: point.y
-                        };
+                var best = null;
+                for (var i = 0; i < (ocrResult.items || []).length; i++) {
+                    var label = text.clean(ocrResult.items[i].label || "");
+                    var bounds = ocrResult.items[i].bounds || {};
+                    if (isSeriesTabCandidate(label, bounds, w, h, ocrResult.items || [])) {
+                        var score = tabScore(label);
+                        if (!best || score > best.score) {
+                            var point = tabClickPoint(label, bounds);
+                            best = {
+                                label: label,
+                                score: score,
+                                x: point.x,
+                                y: point.y
+                            };
+                        }
                     }
                 }
-            }
 
-            if (best) {
-                log("点击剧集Tab：" + best.label + " @ " + best.x + "," + best.y);
-                click(best.x, best.y);
-                sleep(config.pageDelay);
+                if (!best) best = fallbackSeriesTabPoint(ocrResult.items || [], w, h);
+
+                if (best) {
+                    log("点击剧集Tab：" + best.label + " @ " + best.x + "," + best.y);
+                    click(best.x, best.y);
+                    sleep(config.pageDelay);
+                    if (ownsImage) img.recycle();
+                    return { success: true, clickedTab: true };
+                }
+
                 if (ownsImage) img.recycle();
-                return { success: true, clickedTab: true };
+                if (attempt < attempts - 1) sleep(500);
             }
 
-            if (looksLikeSeriesPage(ocrResult, w, h)) {
-                log("未定位到剧集Tab，但当前页面已有剧集卡片，直接读取");
-                if (ownsImage) img.recycle();
-                return {
-                    success: true,
-                    alreadySeriesPage: true,
-                    firstPageOcr: ocrResult,
-                    firstPageHeight: h
-                };
-            }
-
-            if (ownsImage) img.recycle();
             return { success: false };
+        }
+
+        function shouldForceClickSeriesTab(accountLabel) {
+            var normalized = text.canonicalizeKnownAccountName(accountLabel || "");
+            return normalized === "天使不会哭呀";
         }
 
         function isSeriesTabCandidate(label, bounds, w, h, items) {
@@ -1471,6 +1564,41 @@
                 if (Math.abs(itemCenterY - centerY) <= 36) return true;
             }
             return false;
+        }
+
+        function fallbackSeriesTabPoint(items, w, h) {
+            var home = findExactTab(items, "主页", w, h);
+            var video = findExactTab(items, "视频", w, h);
+            if (home && video && Math.abs(home.y - video.y) <= 40) {
+                var step = video.x - home.x;
+                if (step > w * 0.06 && step < w * 0.22) {
+                    return {
+                        label: "推算剧集Tab",
+                        score: 60,
+                        x: Math.round(video.x + step),
+                        y: Math.round((home.y + video.y) / 2)
+                    };
+                }
+            }
+            return null;
+        }
+
+        function findExactTab(items, expected, w, h) {
+            for (var i = 0; i < (items || []).length; i++) {
+                var label = text.clean(items[i].label || "").replace(/\s+/g, "");
+                var b = items[i].bounds || {};
+                if (label === expected && isTabBounds(b, w, h)) {
+                    return {
+                        x: Math.round(centerX(b)),
+                        y: Math.round((Number(b.top || 0) + Number(b.bottom || 0)) / 2)
+                    };
+                }
+            }
+            return null;
+        }
+
+        function centerX(bounds) {
+            return (Number(bounds.left || 0) + Number(bounds.right || 0)) / 2;
         }
 
         function tabScore(label) {
@@ -1894,7 +2022,7 @@
                 log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
             }
 
-            var tabResult = actions.clickSeriesTab(clickResult.img, ocr);
+            var tabResult = actions.clickSeriesTab(clickResult.img, ocr, { accountLabel: account.label });
             clickResult.img.recycle();
             if (!tabResult.success) {
                 warn("未找到剧集Tab，跳过：" + account.label);
