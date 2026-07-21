@@ -85,7 +85,7 @@ function isAccountRow(row, screenHeight) {
     if (/^(推荐|朋友|赞|评论|转发|可能含有AI生成内容)$/.test(label)) return false;
     if (row.top > screenHeight * 0.92) return false;
     if (label.length < 2) return false;
-    if (hasNoisyAccountChars(label) && config.standardAccountOrderMode !== true) return false;
+    if (hasNoisyAccountChars(label) && config.allowNoisyAccountRows !== true) return false;
     if (text.countChineseChars(label) < 2) {
         return isLikelyTopSelfAccount(row, label, screenHeight);
     }
