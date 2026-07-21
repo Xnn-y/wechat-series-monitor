@@ -2,6 +2,7 @@
 .env
 server/.env
 *.local
+ai_recognition_config.json
 
 # Python
 __pycache__/
@@ -21,6 +22,7 @@ yarn-error.log*
 # Runtime data
 server/data/*.db
 server/data/*.db-*
+server/data/runtime/
 *.sqlite
 *.sqlite3
 logs/

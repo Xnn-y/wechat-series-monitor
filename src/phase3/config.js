@@ -26,6 +26,43 @@ var config = {
         mergeLine: true,
         debug: true
     },
+    recognition: {
+        mode: "backend_ai",
+        aiEnabled: false,
+        minConfidence: 0.78,
+        maxAiCallsPerScreen: 1,
+        debug: true
+    },
+    backendRecognition: {
+        enabled: true,
+        timeout: 120000,
+        fallbackLocalAi: false,
+        debug: true
+    },
+    aiRecognition: {
+        enabled: true,
+        provider: "volcengine",
+        configFile: joinPath(dataDir, "ai_recognition_config.json"),
+        apiKey: "",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+        model: "doubao-seed-2-0-lite-260215",
+        timeout: 90000,
+        minConfidence: 0.65,
+        fallbackLocalOcr: false,
+        maxScreensPerAccount: 6,
+        debug: true
+    },
+    volcOcr: {
+        enabled: false,
+        configFile: joinPath(dataDir, "volc_ocr_config.json"),
+        accessKeyId: "",
+        secretAccessKey: "",
+        mode: "default",
+        filterThresh: 60,
+        timeout: 30000,
+        fallbackLocalOcr: true,
+        debug: true
+    },
     pageDelay: 1200,
     captureRetryTries: 12,
     captureRetryInterval: 900,
@@ -33,8 +70,8 @@ var config = {
     captureRecoverMaxTries: 1,
     captureRecoverDelay: 1800,
     maxSeries: 12,
-    maxSeriesScrolls: 10,
-    maxNoNewSeriesPages: 6,
+    maxSeriesScrolls: 6,
+    maxNoNewSeriesPages: 2,
     maxAccountScrolls: 30,
     maxAccountSteps: 200,
     maxEmptyAccountPages: 2,

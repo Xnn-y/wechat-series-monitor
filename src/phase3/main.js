@@ -8,17 +8,25 @@ var seriesParser = require("./series_parser.js");
 var csvStore = require("./csv_store.js");
 var actions = require("./actions.js");
 var reporter = require("./reporter.js");
+var backendRecognizer = require("./backend_recognizer.js");
 var textUtils = require("./text_utils.js");
 var time = require("./time.js");
 
-function collectSeries(initialPage) {
+function makeRunId() {
+    return time.beijingTime().replace(/[:\-\s]/g, "_").replace(/\.\d+/, "");
+}
+
+function collectSeries(initialPage, ctx) {
     var allNames = [];
     var noNewCount = 0;
+    var maxScreens = seriesParser.maxSeriesScreens();
+    var pageResult = null;
 
     sleep(config.pageDelay);
-    for (var scroll = 0; scroll < config.maxSeriesScrolls; scroll++) {
+    for (var scroll = 0; scroll < maxScreens; scroll++) {
         var pageNames;
-        if (scroll === 0 && initialPage && initialPage.ocrResult) {
+        pageResult = null;
+        if (scroll === 0 && initialPage && initialPage.ocrResult && !seriesParser.prefersFreshImage()) {
             pageNames = seriesParser.extractCompleteCardTitles(
                 initialPage.ocrResult.items || [],
                 initialPage.height || device.height
@@ -31,7 +39,18 @@ function collectSeries(initialPage) {
                 break;
             }
 
-            pageNames = seriesParser.readSeriesNames(pageImg, ocr);
+            try {
+                pageResult = seriesParser.readSeriesPage(pageImg, ocr, {
+                    runId: ctx && ctx.runId,
+                    account: ctx && ctx.account,
+                    screenIndex: scroll
+                });
+                pageNames = pageResult.names || [];
+            } catch (e) {
+                warn("Series recognition failed; stop current account: " + e);
+                pageImg.recycle();
+                break;
+            }
             pageImg.recycle();
         }
 
@@ -43,6 +62,11 @@ function collectSeries(initialPage) {
         log("新增剧集 " + newCount + " 个，累计 " + allNames.length + " 个");
 
         if (allNames.length >= config.maxSeries) {
+            break;
+        }
+
+        if (pageResult && pageResult.shouldContinue === false) {
+            log("后端识别要求停止当前账号：" + (pageResult.reason || ""));
             break;
         }
 
@@ -93,7 +117,7 @@ function markNewSeries(outputRecords, observedRecords, accountName, seriesNames)
     return appended;
 }
 
-function collectAccount(account, outputRecords, observedRecords) {
+function collectAccount(account, outputRecords, observedRecords, runContext) {
     log("进入账号：" + account.label);
 
     var clickResult = actions.clickAccount(account, ocr);
@@ -128,8 +152,11 @@ function collectAccount(account, outputRecords, observedRecords) {
             height: tabResult.firstPageHeight
         };
     }
-    var seriesNames = collectSeries(initialSeriesPage);
     var accountNameForCsv = profileAccountName || account.label;
+    var seriesNames = collectSeries(initialSeriesPage, {
+        runId: runContext && runContext.runId,
+        account: accountNameForCsv
+    });
     var appended = markNewSeries(outputRecords, observedRecords, accountNameForCsv, seriesNames);
     log("账号完成：" + accountNameForCsv + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
 
@@ -158,7 +185,7 @@ function pickTrustedProfileAccountName(listName, profileName) {
     return profileName;
 }
 
-function collectAccountsOnce(outputRecords, observedRecords) {
+function collectAccountsOnce(outputRecords, observedRecords, runContext) {
     var processedAccounts = {};
     var processedAccountLabels = [];
     var lastAccountLabel = "";
@@ -274,7 +301,7 @@ function collectAccountsOnce(outputRecords, observedRecords) {
         lastAccountLabel = targetAccount.label;
         scannedCount++;
 
-        if (collectAccount(targetAccount, outputRecords, observedRecords)) {
+        if (collectAccount(targetAccount, outputRecords, observedRecords, runContext)) {
             successCount++;
         } else {
             failCount++;
@@ -428,6 +455,8 @@ function main() {
     console.show();
     log("启动关注账号剧集采集");
     log("CSV路径：" + config.csvFile);
+    var runContext = { runId: makeRunId() };
+    log("Run ID: " + runContext.runId);
 
     var standardAccounts = reporter.fetchStandardAccounts();
     if (textUtils.setKnownAccountNames(standardAccounts)) {
@@ -440,7 +469,8 @@ function main() {
 
     var outputRecords = [];
     var observedRecords = [];
-    var summary = collectAccountsOnce(outputRecords, observedRecords);
+    var summary = collectAccountsOnce(outputRecords, observedRecords, runContext);
+    summary.runId = runContext.runId;
 
     finishRun(summary);
 
@@ -464,6 +494,21 @@ function main() {
         }
     } else {
         log("本轮没有可上报的剧集识别结果");
+    }
+
+    try {
+        var aiSummary = backendRecognizer.fetchSummary(runContext.runId);
+        if (aiSummary && aiSummary.ok && aiSummary.ai_usage) {
+            var usage = aiSummary.ai_usage;
+            log("AI调用次数: " + (usage.calls || 0)
+                + " 成功: " + (usage.success_calls || 0)
+                + " 失败: " + (usage.failed_calls || 0)
+                + " 输入tokens: " + (usage.input_tokens || 0)
+                + " 输出tokens: " + (usage.output_tokens || 0)
+                + " 总tokens: " + (usage.total_tokens || 0));
+        }
+    } catch (e) {
+        warn("AI token统计读取失败: " + e);
     }
 
     // 发送心跳

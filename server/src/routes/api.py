@@ -13,6 +13,7 @@ from src.services import (
     record_heartbeat,
     run_health_check,
 )
+from src.services.recognition_session import recognize_screen, get_summary as get_recognition_summary
 
 api = Blueprint("api", __name__)
 
@@ -381,6 +382,33 @@ def heartbeat():
 def health_check():
     result = run_health_check()
     return jsonify(result)
+
+
+# ============================================================
+# POST /api/collector/series/recognize - AI series screenshot recognition
+# ============================================================
+@api.route("/api/collector/series/recognize", methods=["POST"])
+@require_token
+def recognize_series():
+    payload = request.get_json(silent=True) or {}
+    result = recognize_screen(payload)
+    status = 200 if result.get("ok") else 400
+    if result.get("reason") in {"ai_error", "missing_image"}:
+        status = 200 if result.get("reason") == "ai_error" else 400
+    return jsonify(result), status
+
+
+# ============================================================
+# GET /api/collector/series/recognize/summary - AI usage summary
+# ============================================================
+@api.route("/api/collector/series/recognize/summary", methods=["GET"])
+@require_token
+def recognize_series_summary():
+    run_id = request.args.get("run_id", "").strip()
+    if not run_id:
+        return jsonify({"ok": False, "error": "run_id required"}), 400
+    result = get_recognition_summary(run_id)
+    return jsonify(result), 200 if result.get("ok") else 404
 
 
 # ============================================================

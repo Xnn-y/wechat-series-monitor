@@ -1,9 +1,131 @@
 var text = require("./text_utils.js");
+var config = require("./config.js");
+var volcOcr = require("./volc_ocr.js");
+var aiRecognizer = require("./ai_recognizer.js");
+var backendRecognizer = require("./backend_recognizer.js");
+var aiDisabledForRun = false;
+var backendAiDisabledForRun = false;
+
+function readSeriesPage(img, ocr, ctx) {
+    if (shouldUseBackendAiSeries()) {
+        if (backendAiDisabledForRun) {
+            throw new Error("BACKEND_AI_SERIES_DISABLED_FOR_RUN");
+        }
+        try {
+            var backendResult = backendRecognizer.recognizeSeriesScreen(ctx || {}, img);
+            return {
+                names: backendResult.titles || [],
+                shouldContinue: backendResult.should_continue !== false,
+                reason: backendResult.reason || "",
+                usage: backendResult.usage || {}
+            };
+        } catch (e) {
+            warn("Backend AI series failed: " + e);
+            if (!(config.backendRecognition && config.backendRecognition.fallbackLocalAi)) {
+                backendAiDisabledForRun = true;
+                throw new Error("BACKEND_AI_SERIES_STOP:" + e);
+            }
+        }
+    }
+
+    return {
+        names: readSeriesNames(img, ocr),
+        shouldContinue: true,
+        reason: "local_recognition"
+    };
+}
 
 function readSeriesNames(img, ocr) {
+    if (shouldUseAiSeries()) {
+        if (aiDisabledForRun) {
+            throw new Error("AI_SERIES_DISABLED_FOR_RUN");
+        }
+        try {
+            var aiResult = aiRecognizer.detectSeriesPage(img);
+            var aiNames = extractAiSeriesTitles(aiResult);
+            if (config.aiRecognition.debug) {
+                log("AI series: cards=" + ((aiResult.seriesCards || []).length) + " candidates=" + aiNames.length);
+            }
+            return aiNames;
+        } catch (e) {
+            warn("AI series failed: " + e);
+            if (!config.aiRecognition.fallbackLocalOcr) {
+                aiDisabledForRun = true;
+                throw new Error("AI_SERIES_STOP:" + e);
+            }
+        }
+    }
+
+    if (shouldUseVolcOcr()) {
+        try {
+            var volcResult = volcOcr.recognizeImage(img);
+            volcResult.count = (volcResult.items || []).length;
+            var volcNames = extractCompleteCardTitles(volcResult.items || [], img.getHeight());
+            if (config.volcOcr.debug) {
+                log("Volc OCR series: items=" + volcResult.count + " candidates=" + volcNames.length);
+            }
+            return volcNames;
+        } catch (e) {
+            warn("Volc OCR series failed: " + e);
+            if (!config.volcOcr.fallbackLocalOcr) return [];
+        }
+    }
+
     var ocrResult = ocr.ocrScreen(img, null, "series");
     var names = extractCompleteCardTitles(ocrResult.items || [], img.getHeight());
     ocr.logOcrChoice("剧集页", ocrResult, names.length);
+    return names;
+}
+
+function shouldUseAiSeries() {
+    return !!(config.aiRecognition && config.aiRecognition.enabled && String(config.recognition && config.recognition.mode || "").toLowerCase() === "ai");
+}
+
+function shouldUseBackendAiSeries() {
+    var mode = String(config.recognition && config.recognition.mode || "").toLowerCase();
+    return !!(config.backendRecognition && config.backendRecognition.enabled && mode === "backend_ai");
+}
+
+function shouldUseVolcOcr() {
+    return !!(config.volcOcr && config.volcOcr.enabled && volcOcr.isEnabled());
+}
+
+function prefersFreshImage() {
+    return shouldUseBackendAiSeries() || shouldUseAiSeries() || shouldUseVolcOcr();
+}
+
+function maxSeriesScreens() {
+    if (shouldUseBackendAiSeries()) {
+        return Math.max(1, Math.min(
+            Number(config.maxSeriesScrolls || 1),
+            Number((config.aiRecognition && config.aiRecognition.maxScreensPerAccount) || config.maxSeriesScrolls || 1)
+        ));
+    }
+    if (shouldUseAiSeries()) {
+        return Math.max(1, Math.min(
+            Number(config.maxSeriesScrolls || 1),
+            Number((config.aiRecognition && config.aiRecognition.maxScreensPerAccount) || 1)
+        ));
+    }
+    return Number(config.maxSeriesScrolls || 1);
+}
+
+function extractAiSeriesTitles(aiResult) {
+    var cards = (aiResult && aiResult.seriesCards) || [];
+    var names = [];
+    var seen = {};
+    var minConfidence = Number((config.aiRecognition && config.aiRecognition.minConfidence) || 0);
+    for (var i = 0; i < cards.length; i++) {
+        var card = cards[i] || {};
+        if (card.isCompleteCard === false) continue;
+        if (Number(card.confidence || 0) < minConfidence) continue;
+        var title = cleanSeriesTitle(card.title || "");
+        if (!title || !isSeriesTitleCandidate(title)) continue;
+        var key = text.toSimplified(text.stripPunct(title));
+        if (seen[key]) continue;
+        seen[key] = true;
+        names.push(title);
+    }
     return names;
 }
 
@@ -69,15 +191,14 @@ function findSeriesContentTop(items, screenHeight) {
         }
     }
     if (tabBottom === 0) tabBottom = Math.round(screenHeight * 0.35);
-    return tabBottom + 40;
+    return tabBottom + 20;
 }
 
 function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
-    var titleParts = [];
-    var minY = Math.max(tabBottom, episode.y - 180);
-    var maxY = episode.y + 4;
-    var columnCenter = episode.x;
-    var columnHalfWidth = Math.max(130, device.width * 0.24);
+    var candidates = [];
+    var epX = episode.x;
+    var epY = episode.y;
+    var epLeft = Number((episode.bounds || {}).left || epX);
 
     for (var i = 0; i < items.length; i++) {
         var b = items[i].bounds || {};
@@ -87,28 +208,68 @@ function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
         if (text.isTabText(label)) continue;
 
         var top = b.top || 0;
-        if (top < minY || top > maxY) continue;
-        if (Math.abs(centerX(b) - columnCenter) > columnHalfWidth) continue;
+        var bottom = Number(b.bottom || top);
+        if (top <= tabBottom && epY > tabBottom + 80) continue;
+        if (top > epY) continue;
+        var distanceToEpisode = epY - bottom;
+        if (distanceToEpisode < 0 || distanceToEpisode > 95) continue;
         if (!isTitlePartCandidate(label, b, episode)) continue;
+        if (!isSameCardColumn(b, epX, epLeft)) continue;
 
-        titleParts.push({
+        candidates.push({
             text: label,
-            y: top,
-            bottom: Number(b.bottom || top),
-            x: b.left || 0
+            top: top,
+            bottom: bottom,
+            left: Number(b.left || 0),
+            right: Number(b.right || b.left || 0),
+            x: centerX(b)
         });
     }
 
-    titleParts = nearestTitleRows(titleParts, episode);
-    titleParts.sort(function(a, b) {
-        if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
-        return a.x - b.x;
+    if (!candidates.length) return shortInlineTitle || "";
+    candidates.sort(function(a, b) { return b.bottom - a.bottom; });
+
+    var block = [candidates[0]];
+    var anchor = candidates[0];
+    for (var c = 1; c < candidates.length; c++) {
+        var candidate = candidates[c];
+        var verticalGap = anchor.top - candidate.bottom;
+        if (verticalGap < 0 || verticalGap > 18) continue;
+        if (!belongsToTitleBlock(candidate, anchor)) continue;
+        block.push(candidate);
+        anchor = candidate;
+        if (block.length >= 2) break;
+    }
+
+    if (isTopEdgeResidue(block, episode)) return "";
+    block.sort(function(a, b) {
+        if (Math.abs(a.top - b.top) > 24) return a.top - b.top;
+        return a.left - b.left;
     });
-    var title = titleParts.map(function(item) { return item.text; }).join("");
+    var title = block.map(function(item) { return item.text; }).join("");
     if (shortInlineTitle && title.indexOf(shortInlineTitle) < 0) {
         title += shortInlineTitle;
     }
     return title;
+}
+
+function isSameCardColumn(bounds, epX, epLeft) {
+    var left = Number(bounds.left || 0);
+    var right = Number(bounds.right || left);
+    var titleX = centerX(bounds);
+    if (Math.abs(left - epLeft) <= 45) return true;
+    if (left <= epX && epX <= right && Math.abs(titleX - epX) <= 220) return true;
+    return false;
+}
+
+function belongsToTitleBlock(candidate, anchor) {
+    var leftGap = Math.abs(candidate.left - anchor.left);
+    var xGap = Math.abs(candidate.x - anchor.x);
+    if (leftGap <= 45) return true;
+    if (text.stripPunct(anchor.text || "").length <= 2 && candidate.left <= anchor.left && anchor.left <= candidate.right) {
+        return true;
+    }
+    return xGap <= 120;
 }
 
 function nearestTitleRows(titleParts, episode) {
@@ -141,7 +302,7 @@ function nearestTitleRows(titleParts, episode) {
     var bestGap = 99999;
     for (var r = 0; r < rows.length; r++) {
         var gap = episode.y - rows[r].bottom;
-        if (gap >= -8 && gap <= 125 && gap < bestGap) {
+        if (gap >= -8 && gap <= 95 && gap < bestGap) {
             bestGap = gap;
             bestIndex = r;
         }
@@ -154,7 +315,7 @@ function nearestTitleRows(titleParts, episode) {
         var distanceToSelected = selected[0].y - rows[p].bottom;
         var distanceToEpisode = episode.y - rows[p].bottom;
         var rowHeight = Math.max(1, rows[p].height || (rows[p].bottom - rows[p].y));
-        if (distanceToSelected > 58 || distanceToEpisode > 150) break;
+        if (distanceToSelected > 18 || distanceToEpisode > 95) break;
         if (rowHeight < anchorHeight * 0.68) break;
         selected.unshift(rows[p]);
     }
@@ -166,7 +327,16 @@ function nearestTitleRows(titleParts, episode) {
             result.push(selected[s].items[j]);
         }
     }
+    if (isTopEdgeResidue(result, episode)) return [];
     return result;
+}
+
+function isTopEdgeResidue(parts, episode) {
+    if (!parts || parts.length !== 1) return false;
+    var item = parts[0];
+    var compact = text.stripPunct(text.toSimplified(text.clean(item.text || "")));
+    var top = Number(item.top || item.y || 0);
+    return Number(episode.y || 0) < 600 && top >= 360 && compact.length <= 5;
 }
 
 function extractInlineTitleBeforeEpisode(label, allowShort) {
@@ -314,7 +484,10 @@ function centerX(bounds) {
 }
 
 module.exports = {
+    readSeriesPage: readSeriesPage,
     readSeriesNames: readSeriesNames,
+    prefersFreshImage: prefersFreshImage,
+    maxSeriesScreens: maxSeriesScreens,
     extractCompleteCardTitles: extractCompleteCardTitles,
     mergeAndDedup: mergeAndDedup
 };

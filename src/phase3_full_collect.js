@@ -52,6 +52,43 @@
                 mergeLine: true,
                 debug: true
             },
+            recognition: {
+                mode: "backend_ai",
+                aiEnabled: false,
+                minConfidence: 0.78,
+                maxAiCallsPerScreen: 1,
+                debug: true
+            },
+            backendRecognition: {
+                enabled: true,
+                timeout: 120000,
+                fallbackLocalAi: false,
+                debug: true
+            },
+            aiRecognition: {
+                enabled: true,
+                provider: "volcengine",
+                configFile: joinPath(dataDir, "ai_recognition_config.json"),
+                apiKey: "",
+                baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+                model: "doubao-seed-2-0-lite-260215",
+                timeout: 90000,
+                minConfidence: 0.65,
+                fallbackLocalOcr: false,
+                maxScreensPerAccount: 6,
+                debug: true
+            },
+            volcOcr: {
+                enabled: false,
+                configFile: joinPath(dataDir, "volc_ocr_config.json"),
+                accessKeyId: "",
+                secretAccessKey: "",
+                mode: "default",
+                filterThresh: 60,
+                timeout: 30000,
+                fallbackLocalOcr: true,
+                debug: true
+            },
             pageDelay: 1200,
             captureRetryTries: 12,
             captureRetryInterval: 900,
@@ -59,8 +96,8 @@
             captureRecoverMaxTries: 1,
             captureRecoverDelay: 1800,
             maxSeries: 12,
-            maxSeriesScrolls: 10,
-            maxNoNewSeriesPages: 6,
+            maxSeriesScrolls: 6,
+            maxNoNewSeriesPages: 2,
             maxAccountScrolls: 30,
             maxAccountSteps: 200,
             maxEmptyAccountPages: 2,
@@ -805,13 +842,524 @@
 
     };
 
+    __phase3Factories["backend_recognizer.js"] = function (require, module, exports) {
+        var config = require("./config.js");
+
+        function recognizeSeriesScreen(ctx, img) {
+            var cfg = config.backendRecognition || {};
+            if (!cfg.enabled) {
+                throw new Error("backend recognition disabled");
+            }
+            var serverUrl = (config.backend && config.backend.serverUrl) || "";
+            var token = (config.backend && config.backend.collectorToken) || "";
+            if (!serverUrl) throw new Error("backend serverUrl is not configured");
+            if (!token) throw new Error("backend collectorToken is not configured");
+
+            var payload = {
+                run_id: (ctx && ctx.runId) || "",
+                account: (ctx && ctx.account) || "unknown",
+                screen_index: Number((ctx && ctx.screenIndex) || 0),
+                image_base64: imageToBase64(img),
+                image_format: "jpg"
+            };
+            var url = serverUrl.replace(/\/+$/, "") + "/api/collector/series/recognize";
+            var responseText = postJson(url, token, payload, Number(cfg.timeout || 120000));
+            var result = JSON.parse(responseText);
+            if (!result.ok) {
+                throw new Error("backend recognition failed: " + (result.error || result.reason || responseText));
+            }
+            if (cfg.debug) {
+                var usage = result.usage || {};
+                log("[backend AI] titles=" + ((result.titles || []).length)
+                    + " continue=" + result.should_continue
+                    + " reason=" + result.reason
+                    + " calls=" + (usage.screen_calls_for_run || 0)
+                    + " tokens=" + (usage.run_total_tokens || usage.total_tokens || 0));
+            }
+            return result;
+        }
+
+        function fetchSummary(runId) {
+            var serverUrl = (config.backend && config.backend.serverUrl) || "";
+            var token = (config.backend && config.backend.collectorToken) || "";
+            if (!serverUrl || !token || !runId) return null;
+            var url = serverUrl.replace(/\/+$/, "") + "/api/collector/series/recognize/summary?run_id=" + encodeURIComponent(runId);
+            var res = http.get(url, {
+                headers: {
+                    "X-Collector-Token": token
+                }
+            });
+            var statusCode = Number(res.statusCode || res.status || 0);
+            var bodyText = readResponseBody(res);
+            if (statusCode < 200 || statusCode >= 300) {
+                throw new Error("backend summary HTTP " + statusCode + ": " + bodyText);
+            }
+            return JSON.parse(bodyText);
+        }
+
+        function imageToBase64(img) {
+            if (images.toBase64) {
+                return images.toBase64(img, "jpg", 82);
+            }
+            if (images.toBytes) {
+                var bytes = images.toBytes(img, "jpg", 82);
+                return android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+            }
+            throw new Error("AutoJs images.toBase64/toBytes is unavailable");
+        }
+
+        function postJson(url, token, payload, timeout) {
+            var body = JSON.stringify(payload);
+            var res;
+            if (typeof http.postJson === "function") {
+                res = http.postJson(url, payload, {
+                    headers: {
+                        "Content-Type": "application/json; charset=utf-8",
+                        "X-Collector-Token": token
+                    },
+                    timeout: timeout
+                });
+            } else {
+                res = http.request(url, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json; charset=utf-8",
+                        "X-Collector-Token": token
+                    },
+                    body: body,
+                    timeout: timeout
+                });
+            }
+            var statusCode = Number(res.statusCode || res.status || 0);
+            var text = readResponseBody(res);
+            if (statusCode < 200 || statusCode >= 300) {
+                throw new Error("backend recognition HTTP " + statusCode + ": " + text);
+            }
+            return text;
+        }
+
+        function readResponseBody(res) {
+            try {
+                if (typeof res.body === "function") {
+                    return res.body().string();
+                }
+                if (typeof res.body === "object" && res.body.string) {
+                    return res.body.string();
+                }
+                return String(res.body || "");
+            } catch (e) {
+                return "";
+            }
+        }
+
+        module.exports = {
+            recognizeSeriesScreen: recognizeSeriesScreen,
+            fetchSummary: fetchSummary
+        };
+
+    };
+
+    __phase3Factories["volc_ocr.js"] = function (require, module, exports) {
+        var config = require("./config.js");
+
+        var SERVICE = "cv";
+        var REGION = "cn-north-1";
+        var HOST = "visual.volcengineapi.com";
+        var ACTION = "MultiLanguageOCR";
+        var VERSION = "2022-08-31";
+
+        function isEnabled() {
+            return !!(config.volcOcr && config.volcOcr.enabled);
+        }
+
+        function recognizeImage(img) {
+            var cfg = loadConfig();
+            if (!cfg.accessKeyId || !cfg.secretAccessKey) {
+                throw new Error("Volc OCR accessKeyId/secretAccessKey is not configured");
+            }
+
+            var imageBase64 = imageToBase64(img);
+            var body = formEncode({
+                image_base64: imageBase64,
+                mode: cfg.mode || "default",
+                filter_thresh: String(cfg.filterThresh || 60)
+            });
+            var payloadHash = sha256Hex(body);
+            var date = requestDate();
+            var query = {
+                Action: ACTION,
+                Version: VERSION
+            };
+            var authorization = signRequest(cfg.accessKeyId, cfg.secretAccessKey, date.shortDate, date.xDate, query, body, payloadHash);
+            var url = "https://" + HOST + "/?" + canonicalQueryString(query);
+            var headers = {
+                "Host": HOST,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Date": date.xDate,
+                "X-Content-Sha256": payloadHash,
+                "Authorization": authorization
+            };
+
+            var response = httpRequest(url, headers, body, Number(cfg.timeout || 30000));
+            var parsed = JSON.parse(response);
+            if (parsed.status && Number(parsed.status) !== 10000) {
+                throw new Error("Volc OCR status=" + parsed.status + " message=" + (parsed.message || ""));
+            }
+            return {
+                mode: "volc",
+                count: 0,
+                items: normalizeItems(parsed),
+                score: 0,
+                raw: parsed
+            };
+        }
+
+        function loadConfig() {
+            var base = config.volcOcr || {};
+            var out = {};
+            for (var k in base) {
+                if (base.hasOwnProperty(k)) out[k] = base[k];
+            }
+            if (out.configFile) {
+                try {
+                    if (files.exists(out.configFile)) {
+                        var fileConfig = JSON.parse(files.read(out.configFile));
+                        for (var fk in fileConfig) {
+                            if (fileConfig.hasOwnProperty(fk) && fileConfig[fk] !== undefined && fileConfig[fk] !== "") {
+                                out[fk] = fileConfig[fk];
+                            }
+                        }
+                    }
+                } catch (e) {
+                    throw new Error("Failed to read Volc OCR configFile: " + e);
+                }
+            }
+            return out;
+        }
+
+        function imageToBase64(img) {
+            if (images.toBase64) {
+                return images.toBase64(img, "jpg", 85);
+            }
+            if (images.toBytes) {
+                var bytes = images.toBytes(img, "jpg", 85);
+                return android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+            }
+            throw new Error("AutoJs images.toBase64/toBytes is unavailable");
+        }
+
+        function httpRequest(url, headers, body, timeout) {
+            var options = {
+                method: "POST",
+                headers: headers,
+                body: body,
+                timeout: timeout
+            };
+            var res = http.request(url, options);
+            var statusCode = Number(res.statusCode || res.status || 0);
+            var text = res.body ? res.body.string() : "";
+            if (statusCode < 200 || statusCode >= 300) {
+                throw new Error("Volc OCR HTTP " + statusCode + ": " + text);
+            }
+            return text;
+        }
+
+        function normalizeItems(response) {
+            var infos = [];
+            try {
+                infos = (response.data && response.data.ocr_infos) || [];
+            } catch (e) {
+                infos = [];
+            }
+            var items = [];
+            for (var i = 0; i < infos.length; i++) {
+                var info = infos[i] || {};
+                var label = String(info.text || info.words || "");
+                if (!label) continue;
+                items.push({
+                    label: label,
+                    confidence: info.prob,
+                    bounds: rectFromPoints(info.rect || info.points || info.polygon),
+                    mode: "volc"
+                });
+            }
+            return items;
+        }
+
+        function rectFromPoints(points) {
+            if (!points || !points.length) return { left: 0, top: 0, right: 0, bottom: 0 };
+            var left = 999999;
+            var top = 999999;
+            var right = 0;
+            var bottom = 0;
+            for (var i = 0; i < points.length; i++) {
+                var p = points[i];
+                var x = 0;
+                var y = 0;
+                if (p && typeof p.x !== "undefined") {
+                    x = Number(p.x);
+                    y = Number(p.y);
+                } else if (p && p.length >= 2) {
+                    x = Number(p[0]);
+                    y = Number(p[1]);
+                }
+                if (isNaN(x) || isNaN(y)) continue;
+                left = Math.min(left, x);
+                top = Math.min(top, y);
+                right = Math.max(right, x);
+                bottom = Math.max(bottom, y);
+            }
+            if (left === 999999) return { left: 0, top: 0, right: 0, bottom: 0 };
+            return { left: left, top: top, right: right, bottom: bottom };
+        }
+
+        function signRequest(accessKeyId, secretAccessKey, shortDate, xDate, query, body, payloadHash) {
+            var signedHeaders = "content-type;host;x-content-sha256;x-date";
+            var canonicalHeaders =
+                "content-type:application/x-www-form-urlencoded\n" +
+                "host:" + HOST + "\n" +
+                "x-content-sha256:" + payloadHash + "\n" +
+                "x-date:" + xDate + "\n";
+            var canonicalRequest = [
+                "POST",
+                "/",
+                canonicalQueryString(query),
+                canonicalHeaders,
+                signedHeaders,
+                payloadHash
+            ].join("\n");
+            var credentialScope = shortDate + "/" + REGION + "/" + SERVICE + "/request";
+            var stringToSign = [
+                "HMAC-SHA256",
+                xDate,
+                credentialScope,
+                sha256Hex(canonicalRequest)
+            ].join("\n");
+            var signingKey = signatureKey(secretAccessKey, shortDate, REGION, SERVICE);
+            var signature = hmacSha256Hex(signingKey, stringToSign);
+            return "HMAC-SHA256 Credential=" + accessKeyId + "/" + credentialScope +
+                ", SignedHeaders=" + signedHeaders +
+                ", Signature=" + signature;
+        }
+
+        function signatureKey(secretAccessKey, shortDate, region, service) {
+            var kDate = hmacSha256Bytes(toBytes(secretAccessKey), shortDate);
+            var kRegion = hmacSha256Bytes(kDate, region);
+            var kService = hmacSha256Bytes(kRegion, service);
+            return hmacSha256Bytes(kService, "request");
+        }
+
+        function requestDate() {
+            var sdf = new java.text.SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
+            sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            var xDate = String(sdf.format(new java.util.Date()));
+            return {
+                xDate: xDate,
+                shortDate: xDate.substring(0, 8)
+            };
+        }
+
+        function formEncode(params) {
+            var parts = [];
+            var keys = [];
+            for (var key in params) {
+                if (params.hasOwnProperty(key)) keys.push(key);
+            }
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                parts.push(percentEncode(k) + "=" + percentEncode(params[k]));
+            }
+            return parts.join("&");
+        }
+
+        function canonicalQueryString(query) {
+            var keys = [];
+            for (var key in query) {
+                if (query.hasOwnProperty(key)) keys.push(key);
+            }
+            keys.sort();
+            var parts = [];
+            for (var i = 0; i < keys.length; i++) {
+                parts.push(percentEncode(keys[i]) + "=" + percentEncode(query[keys[i]]));
+            }
+            return parts.join("&");
+        }
+
+        function percentEncode(value) {
+            return encodeURIComponent(String(value))
+                .replace(/[!'()*]/g, function(ch) {
+                    return "%" + ch.charCodeAt(0).toString(16).toUpperCase();
+                });
+        }
+
+        function sha256Hex(value) {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            md.update(toBytes(value));
+            return bytesToHex(md.digest());
+        }
+
+        function hmacSha256Bytes(keyBytes, value) {
+            var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(keyBytes, "HmacSHA256"));
+            return mac.doFinal(toBytes(value));
+        }
+
+        function hmacSha256Hex(keyBytes, value) {
+            return bytesToHex(hmacSha256Bytes(keyBytes, value));
+        }
+
+        function toBytes(value) {
+            if (value && value.getClass && String(value.getClass()).indexOf("[B") >= 0) return value;
+            return new java.lang.String(String(value)).getBytes("UTF-8");
+        }
+
+        function bytesToHex(bytes) {
+            var out = "";
+            for (var i = 0; i < bytes.length; i++) {
+                var v = bytes[i];
+                if (v < 0) v += 256;
+                if (v < 16) out += "0";
+                out += v.toString(16);
+            }
+            return out;
+        }
+
+        module.exports = {
+            isEnabled: isEnabled,
+            recognizeImage: recognizeImage
+        };
+
+    };
+
     __phase3Factories["series_parser.js"] = function (require, module, exports) {
         var text = require("./text_utils.js");
+        var config = require("./config.js");
+        var volcOcr = require("./volc_ocr.js");
+        var aiRecognizer = require("./ai_recognizer.js");
+        var backendRecognizer = require("./backend_recognizer.js");
+        var aiDisabledForRun = false;
+        var backendAiDisabledForRun = false;
+
+        function readSeriesPage(img, ocr, ctx) {
+            if (shouldUseBackendAiSeries()) {
+                if (backendAiDisabledForRun) {
+                    throw new Error("BACKEND_AI_SERIES_DISABLED_FOR_RUN");
+                }
+                try {
+                    var backendResult = backendRecognizer.recognizeSeriesScreen(ctx || {}, img);
+                    return {
+                        names: backendResult.titles || [],
+                        shouldContinue: backendResult.should_continue !== false,
+                        reason: backendResult.reason || "",
+                        usage: backendResult.usage || {}
+                    };
+                } catch (e) {
+                    warn("Backend AI series failed: " + e);
+                    if (!(config.backendRecognition && config.backendRecognition.fallbackLocalAi)) {
+                        backendAiDisabledForRun = true;
+                        throw new Error("BACKEND_AI_SERIES_STOP:" + e);
+                    }
+                }
+            }
+
+            return {
+                names: readSeriesNames(img, ocr),
+                shouldContinue: true,
+                reason: "local_recognition"
+            };
+        }
 
         function readSeriesNames(img, ocr) {
+            if (shouldUseAiSeries()) {
+                if (aiDisabledForRun) {
+                    throw new Error("AI_SERIES_DISABLED_FOR_RUN");
+                }
+                try {
+                    var aiResult = aiRecognizer.detectSeriesPage(img);
+                    var aiNames = extractAiSeriesTitles(aiResult);
+                    if (config.aiRecognition.debug) {
+                        log("AI series: cards=" + ((aiResult.seriesCards || []).length) + " candidates=" + aiNames.length);
+                    }
+                    return aiNames;
+                } catch (e) {
+                    warn("AI series failed: " + e);
+                    if (!config.aiRecognition.fallbackLocalOcr) {
+                        aiDisabledForRun = true;
+                        throw new Error("AI_SERIES_STOP:" + e);
+                    }
+                }
+            }
+
+            if (shouldUseVolcOcr()) {
+                try {
+                    var volcResult = volcOcr.recognizeImage(img);
+                    volcResult.count = (volcResult.items || []).length;
+                    var volcNames = extractCompleteCardTitles(volcResult.items || [], img.getHeight());
+                    if (config.volcOcr.debug) {
+                        log("Volc OCR series: items=" + volcResult.count + " candidates=" + volcNames.length);
+                    }
+                    return volcNames;
+                } catch (e) {
+                    warn("Volc OCR series failed: " + e);
+                    if (!config.volcOcr.fallbackLocalOcr) return [];
+                }
+            }
+
             var ocrResult = ocr.ocrScreen(img, null, "series");
             var names = extractCompleteCardTitles(ocrResult.items || [], img.getHeight());
             ocr.logOcrChoice("剧集页", ocrResult, names.length);
+            return names;
+        }
+
+        function shouldUseAiSeries() {
+            return !!(config.aiRecognition && config.aiRecognition.enabled && String(config.recognition && config.recognition.mode || "").toLowerCase() === "ai");
+        }
+
+        function shouldUseBackendAiSeries() {
+            var mode = String(config.recognition && config.recognition.mode || "").toLowerCase();
+            return !!(config.backendRecognition && config.backendRecognition.enabled && mode === "backend_ai");
+        }
+
+        function shouldUseVolcOcr() {
+            return !!(config.volcOcr && config.volcOcr.enabled && volcOcr.isEnabled());
+        }
+
+        function prefersFreshImage() {
+            return shouldUseBackendAiSeries() || shouldUseAiSeries() || shouldUseVolcOcr();
+        }
+
+        function maxSeriesScreens() {
+            if (shouldUseBackendAiSeries()) {
+                return Math.max(1, Math.min(
+                    Number(config.maxSeriesScrolls || 1),
+                    Number((config.aiRecognition && config.aiRecognition.maxScreensPerAccount) || config.maxSeriesScrolls || 1)
+                ));
+            }
+            if (shouldUseAiSeries()) {
+                return Math.max(1, Math.min(
+                    Number(config.maxSeriesScrolls || 1),
+                    Number((config.aiRecognition && config.aiRecognition.maxScreensPerAccount) || 1)
+                ));
+            }
+            return Number(config.maxSeriesScrolls || 1);
+        }
+
+        function extractAiSeriesTitles(aiResult) {
+            var cards = (aiResult && aiResult.seriesCards) || [];
+            var names = [];
+            var seen = {};
+            var minConfidence = Number((config.aiRecognition && config.aiRecognition.minConfidence) || 0);
+            for (var i = 0; i < cards.length; i++) {
+                var card = cards[i] || {};
+                if (card.isCompleteCard === false) continue;
+                if (Number(card.confidence || 0) < minConfidence) continue;
+                var title = cleanSeriesTitle(card.title || "");
+                if (!title || !isSeriesTitleCandidate(title)) continue;
+                var key = text.toSimplified(text.stripPunct(title));
+                if (seen[key]) continue;
+                seen[key] = true;
+                names.push(title);
+            }
             return names;
         }
 
@@ -877,15 +1425,14 @@
                 }
             }
             if (tabBottom === 0) tabBottom = Math.round(screenHeight * 0.35);
-            return tabBottom + 40;
+            return tabBottom + 20;
         }
 
         function titleAboveEpisode(items, episode, tabBottom, shortInlineTitle) {
-            var titleParts = [];
-            var minY = Math.max(tabBottom, episode.y - 180);
-            var maxY = episode.y + 4;
-            var columnCenter = episode.x;
-            var columnHalfWidth = Math.max(130, device.width * 0.24);
+            var candidates = [];
+            var epX = episode.x;
+            var epY = episode.y;
+            var epLeft = Number((episode.bounds || {}).left || epX);
 
             for (var i = 0; i < items.length; i++) {
                 var b = items[i].bounds || {};
@@ -895,28 +1442,68 @@
                 if (text.isTabText(label)) continue;
 
                 var top = b.top || 0;
-                if (top < minY || top > maxY) continue;
-                if (Math.abs(centerX(b) - columnCenter) > columnHalfWidth) continue;
+                var bottom = Number(b.bottom || top);
+                if (top <= tabBottom && epY > tabBottom + 80) continue;
+                if (top > epY) continue;
+                var distanceToEpisode = epY - bottom;
+                if (distanceToEpisode < 0 || distanceToEpisode > 95) continue;
                 if (!isTitlePartCandidate(label, b, episode)) continue;
+                if (!isSameCardColumn(b, epX, epLeft)) continue;
 
-                titleParts.push({
+                candidates.push({
                     text: label,
-                    y: top,
-                    bottom: Number(b.bottom || top),
-                    x: b.left || 0
+                    top: top,
+                    bottom: bottom,
+                    left: Number(b.left || 0),
+                    right: Number(b.right || b.left || 0),
+                    x: centerX(b)
                 });
             }
 
-            titleParts = nearestTitleRows(titleParts, episode);
-            titleParts.sort(function(a, b) {
-                if (Math.abs(a.y - b.y) > 24) return a.y - b.y;
-                return a.x - b.x;
+            if (!candidates.length) return shortInlineTitle || "";
+            candidates.sort(function(a, b) { return b.bottom - a.bottom; });
+
+            var block = [candidates[0]];
+            var anchor = candidates[0];
+            for (var c = 1; c < candidates.length; c++) {
+                var candidate = candidates[c];
+                var verticalGap = anchor.top - candidate.bottom;
+                if (verticalGap < 0 || verticalGap > 18) continue;
+                if (!belongsToTitleBlock(candidate, anchor)) continue;
+                block.push(candidate);
+                anchor = candidate;
+                if (block.length >= 2) break;
+            }
+
+            if (isTopEdgeResidue(block, episode)) return "";
+            block.sort(function(a, b) {
+                if (Math.abs(a.top - b.top) > 24) return a.top - b.top;
+                return a.left - b.left;
             });
-            var title = titleParts.map(function(item) { return item.text; }).join("");
+            var title = block.map(function(item) { return item.text; }).join("");
             if (shortInlineTitle && title.indexOf(shortInlineTitle) < 0) {
                 title += shortInlineTitle;
             }
             return title;
+        }
+
+        function isSameCardColumn(bounds, epX, epLeft) {
+            var left = Number(bounds.left || 0);
+            var right = Number(bounds.right || left);
+            var titleX = centerX(bounds);
+            if (Math.abs(left - epLeft) <= 45) return true;
+            if (left <= epX && epX <= right && Math.abs(titleX - epX) <= 220) return true;
+            return false;
+        }
+
+        function belongsToTitleBlock(candidate, anchor) {
+            var leftGap = Math.abs(candidate.left - anchor.left);
+            var xGap = Math.abs(candidate.x - anchor.x);
+            if (leftGap <= 45) return true;
+            if (text.stripPunct(anchor.text || "").length <= 2 && candidate.left <= anchor.left && anchor.left <= candidate.right) {
+                return true;
+            }
+            return xGap <= 120;
         }
 
         function nearestTitleRows(titleParts, episode) {
@@ -949,7 +1536,7 @@
             var bestGap = 99999;
             for (var r = 0; r < rows.length; r++) {
                 var gap = episode.y - rows[r].bottom;
-                if (gap >= -8 && gap <= 125 && gap < bestGap) {
+                if (gap >= -8 && gap <= 95 && gap < bestGap) {
                     bestGap = gap;
                     bestIndex = r;
                 }
@@ -962,7 +1549,7 @@
                 var distanceToSelected = selected[0].y - rows[p].bottom;
                 var distanceToEpisode = episode.y - rows[p].bottom;
                 var rowHeight = Math.max(1, rows[p].height || (rows[p].bottom - rows[p].y));
-                if (distanceToSelected > 58 || distanceToEpisode > 150) break;
+                if (distanceToSelected > 18 || distanceToEpisode > 95) break;
                 if (rowHeight < anchorHeight * 0.68) break;
                 selected.unshift(rows[p]);
             }
@@ -974,7 +1561,16 @@
                     result.push(selected[s].items[j]);
                 }
             }
+            if (isTopEdgeResidue(result, episode)) return [];
             return result;
+        }
+
+        function isTopEdgeResidue(parts, episode) {
+            if (!parts || parts.length !== 1) return false;
+            var item = parts[0];
+            var compact = text.stripPunct(text.toSimplified(text.clean(item.text || "")));
+            var top = Number(item.top || item.y || 0);
+            return Number(episode.y || 0) < 600 && top >= 360 && compact.length <= 5;
         }
 
         function extractInlineTitleBeforeEpisode(label, allowShort) {
@@ -1122,7 +1718,10 @@
         }
 
         module.exports = {
+            readSeriesPage: readSeriesPage,
             readSeriesNames: readSeriesNames,
+            prefersFreshImage: prefersFreshImage,
+            maxSeriesScreens: maxSeriesScreens,
             extractCompleteCardTitles: extractCompleteCardTitles,
             mergeAndDedup: mergeAndDedup
         };
@@ -1341,6 +1940,337 @@
             ocrScreen: ocrScreen,
             logOcrChoice: logOcrChoice
         };
+
+    };
+
+    __phase3Factories["ocr_recognizer.js"] = function (require, module, exports) {
+        var ocr = require("./ocr.js");
+
+        function detectRawText(img, purpose) {
+            return ocr.ocrScreen(img, null, purpose);
+        }
+
+        function detectFollowingAccounts(img) {
+            return {
+                engine: "ocr",
+                raw: ocr.ocrScreen(img, null, "account")
+            };
+        }
+
+        function detectProfile(img) {
+            return {
+                engine: "ocr",
+                raw: ocr.ocrScreen(img, null, "profile")
+            };
+        }
+
+        function detectTabs(img) {
+            return {
+                engine: "ocr",
+                raw: ocr.ocrScreen(img, null, "tab")
+            };
+        }
+
+        function detectSeriesPage(img) {
+            return {
+                engine: "ocr",
+                raw: ocr.ocrScreen(img, null, "series")
+            };
+        }
+
+        module.exports = {
+            detectRawText: detectRawText,
+            detectFollowingAccounts: detectFollowingAccounts,
+            detectProfile: detectProfile,
+            detectTabs: detectTabs,
+            detectSeriesPage: detectSeriesPage
+        };
+
+
+    };
+
+    __phase3Factories["ai_recognizer.js"] = function (require, module, exports) {
+        var config = require("./config.js");
+
+        function notConfiguredResult(pageType) {
+            return {
+                engine: "ai",
+                pageType: pageType || "unknown",
+                confidence: 0,
+                accounts: [],
+                tabs: [],
+                seriesCards: [],
+                warnings: ["ai_recognizer_not_configured"]
+            };
+        }
+
+        function detectFollowingAccounts(img) {
+            return notConfiguredResult("following");
+        }
+
+        function detectProfile(img) {
+            return notConfiguredResult("profile");
+        }
+
+        function detectTabs(img) {
+            return notConfiguredResult("profile");
+        }
+
+        function detectSeriesPage(img) {
+            var cfg = loadConfig();
+            if (!cfg.enabled) return notConfiguredResult("series");
+            if (!cfg.apiKey) throw new Error("AI apiKey is not configured");
+            if (!cfg.model) throw new Error("AI model is not configured");
+
+            var payload = {
+                model: cfg.model,
+                input: [{
+                    role: "user",
+                    content: [
+                        { type: "input_text", text: buildSeriesPrompt() },
+                        { type: "input_image", image_url: imageToDataUrl(img) }
+                    ]
+                }]
+            };
+            var body = JSON.stringify(payload);
+            var responseText = httpPost(
+                String(cfg.baseUrl || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/+$/, "") + "/responses",
+                {
+                    "Authorization": "Bearer " + cfg.apiKey,
+                    "Content-Type": "application/json"
+                },
+                body,
+                Number(cfg.timeout || 90000)
+            );
+            var response = JSON.parse(responseText);
+            return normalizeAiResult(parseJsonOutput(extractOutputText(response)));
+        }
+
+        function loadConfig() {
+            var base = config.aiRecognition || {};
+            var out = {};
+            for (var k in base) {
+                if (base.hasOwnProperty(k)) out[k] = base[k];
+            }
+            if (out.configFile) {
+                try {
+                    if (files.exists(out.configFile)) {
+                        var fileConfig = JSON.parse(files.read(out.configFile));
+                        for (var fk in fileConfig) {
+                            if (fileConfig.hasOwnProperty(fk) && fileConfig[fk] !== undefined && fileConfig[fk] !== "") {
+                                out[fk] = fileConfig[fk];
+                            }
+                        }
+                    }
+                } catch (e) {
+                    throw new Error("Failed to read AI configFile: " + e);
+                }
+            }
+            return out;
+        }
+
+        function buildSeriesPrompt() {
+            return [
+                "You are recognizing a WeChat video account series page screenshot.",
+                "Return JSON only. No markdown. No explanation.",
+                "The business output is formal series title only. Episode count is optional and only an anchor.",
+                "Detect only usable series cards from the current screenshot.",
+                "A card is usable when the formal title area below the cover and the episode count area are visible.",
+                "The full cover image does not need to be visible.",
+                "Do not read poster slogans, large cover text, promotional copy, UI tabs, buttons, or edge residue as formal titles.",
+                "If the formal title is cut by the top/bottom screen edge, mark the card incomplete.",
+                "If the title wraps to two lines, merge only adjacent title lines in the same card.",
+                "If only cover image is visible and the formal title/episode area is not visible, do not collect it.",
+                "Return shape:",
+                "{",
+                '  "pageType": "series",',
+                '  "confidence": 0.0,',
+                '  "seriesCards": [',
+                '    {"title": "series title", "episodes": 0, "isCompleteCard": true, "confidence": 0.0, "warnings": []}',
+                "  ],",
+                '  "warnings": []',
+                "}"
+            ].join("\n");
+        }
+
+        function imageToDataUrl(img) {
+            var base64;
+            if (images.toBase64) {
+                base64 = images.toBase64(img, "jpg", 82);
+            } else if (images.toBytes) {
+                var bytes = images.toBytes(img, "jpg", 82);
+                base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+            } else {
+                throw new Error("AutoJs images.toBase64/toBytes is unavailable");
+            }
+            return "data:image/jpeg;base64," + base64;
+        }
+
+        function httpPost(url, headers, body, timeout) {
+            var res = http.request(url, {
+                method: "POST",
+                headers: headers,
+                body: body,
+                timeout: timeout
+            });
+            var statusCode = Number(res.statusCode || res.status || 0);
+            var text = res.body ? res.body.string() : "";
+            if (statusCode < 200 || statusCode >= 300) {
+                throw new Error("AI HTTP " + statusCode + ": " + text);
+            }
+            return text;
+        }
+
+        function extractOutputText(response) {
+            if (typeof response.output_text === "string") return response.output_text;
+            var parts = [];
+            var output = response.output || [];
+            for (var i = 0; i < output.length; i++) {
+                var content = output[i].content || [];
+                for (var j = 0; j < content.length; j++) {
+                    if (typeof content[j].text === "string") parts.push(content[j].text);
+                }
+            }
+            if (!parts.length) throw new Error("AI response missing output_text");
+            return parts.join("\n");
+        }
+
+        function parseJsonOutput(text) {
+            text = String(text || "").trim();
+            if (text.indexOf("```") === 0) {
+                text = text.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+            }
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                var start = text.indexOf("{");
+                var end = text.lastIndexOf("}");
+                if (start < 0 || end <= start) throw e;
+                return JSON.parse(text.substring(start, end + 1));
+            }
+        }
+
+        function normalizeAiResult(result) {
+            result = result || {};
+            if (!result.seriesCards || !result.seriesCards.length) {
+                result.seriesCards = [];
+            }
+            result.engine = "ai";
+            result.pageType = result.pageType || "series";
+            result.confidence = Number(result.confidence || 0);
+            result.warnings = result.warnings || [];
+            for (var i = 0; i < result.seriesCards.length; i++) {
+                var card = result.seriesCards[i] || {};
+                card.title = card.title === null || card.title === undefined ? "" : String(card.title);
+                card.confidence = Number(card.confidence || result.confidence || 0);
+                card.isCompleteCard = card.isCompleteCard !== false;
+                card.warnings = card.warnings || [];
+                result.seriesCards[i] = card;
+            }
+            return result;
+        }
+
+        module.exports = {
+            detectFollowingAccounts: detectFollowingAccounts,
+            detectProfile: detectProfile,
+            detectTabs: detectTabs,
+            detectSeriesPage: detectSeriesPage
+        };
+
+    };
+
+    __phase3Factories["recognizer.js"] = function (require, module, exports) {
+        var config = require("./config.js");
+        var ocrRecognizer = require("./ocr_recognizer.js");
+        var aiRecognizer = require("./ai_recognizer.js");
+
+        function recognitionMode() {
+            return ((config.recognition && config.recognition.mode) || "ocr").toLowerCase();
+        }
+
+        function shouldUseAi() {
+            var mode = recognitionMode();
+            return mode === "ai" || mode === "ai_shadow";
+        }
+
+        function isShadowMode() {
+            return recognitionMode() === "ai_shadow";
+        }
+
+        function logDebug(message) {
+            if (config.recognition && config.recognition.debug) {
+                log("[识别层] " + message);
+            }
+        }
+
+        function withOptionalAiShadow(label, img, ocrFn, aiFn) {
+            var ocrResult = ocrFn(img);
+            if (isShadowMode()) {
+                var aiResult = safeAiCall(label, img, aiFn);
+                logDebug(label + " shadow AI confidence=" + Math.round(Number(aiResult.confidence || 0) * 100)
+                    + " warnings=" + ((aiResult.warnings || []).join("|")));
+                return {
+                    engine: "ocr",
+                    raw: ocrResult.raw || ocrResult,
+                    aiShadow: aiResult
+                };
+            }
+            return ocrResult;
+        }
+
+        function safeAiCall(label, img, aiFn) {
+            if (!shouldUseAi() || !(config.recognition && config.recognition.aiEnabled)) {
+                return {
+                    engine: "ai",
+                    pageType: "unknown",
+                    confidence: 0,
+                    warnings: ["ai_disabled"]
+                };
+            }
+            try {
+                return aiFn(img);
+            } catch (e) {
+                return {
+                    engine: "ai",
+                    pageType: "unknown",
+                    confidence: 0,
+                    warnings: [label + "_ai_error: " + String(e)]
+                };
+            }
+        }
+
+        function detectRawText(img, purpose) {
+            return ocrRecognizer.detectRawText(img, purpose);
+        }
+
+        function detectFollowingAccounts(img) {
+            if (recognitionMode() === "ai") return safeAiCall("following", img, aiRecognizer.detectFollowingAccounts);
+            return withOptionalAiShadow("following", img, ocrRecognizer.detectFollowingAccounts, aiRecognizer.detectFollowingAccounts);
+        }
+
+        function detectProfile(img) {
+            if (recognitionMode() === "ai") return safeAiCall("profile", img, aiRecognizer.detectProfile);
+            return withOptionalAiShadow("profile", img, ocrRecognizer.detectProfile, aiRecognizer.detectProfile);
+        }
+
+        function detectTabs(img) {
+            if (recognitionMode() === "ai") return safeAiCall("tabs", img, aiRecognizer.detectTabs);
+            return withOptionalAiShadow("tabs", img, ocrRecognizer.detectTabs, aiRecognizer.detectTabs);
+        }
+
+        function detectSeriesPage(img) {
+            if (recognitionMode() === "ai") return safeAiCall("series", img, aiRecognizer.detectSeriesPage);
+            return withOptionalAiShadow("series", img, ocrRecognizer.detectSeriesPage, aiRecognizer.detectSeriesPage);
+        }
+
+        module.exports = {
+            detectRawText: detectRawText,
+            detectFollowingAccounts: detectFollowingAccounts,
+            detectProfile: detectProfile,
+            detectTabs: detectTabs,
+            detectSeriesPage: detectSeriesPage
+        };
+
 
     };
 
@@ -1765,9 +2695,8 @@
 
             var collectUrl = serverUrl.replace(/\/+$/, "") + "/api/collect";
 
-            // 生成 run_id
-            var now = new Date();
-            var runId = time.beijingTime().replace(/[:\-\s]/g, "_")
+            // Generate run_id once per collection run. Reuse the recognition run_id when present.
+            var runId = (summary && summary.runId) || time.beijingTime().replace(/[:\-\s]/g, "_")
                 .replace(/\.\d+/, "");
 
             // 收集本轮开始时间：取最早记录的采集时间
@@ -1918,17 +2847,25 @@
         var csvStore = require("./csv_store.js");
         var actions = require("./actions.js");
         var reporter = require("./reporter.js");
+        var backendRecognizer = require("./backend_recognizer.js");
         var textUtils = require("./text_utils.js");
         var time = require("./time.js");
 
-        function collectSeries(initialPage) {
+        function makeRunId() {
+            return time.beijingTime().replace(/[:\-\s]/g, "_").replace(/\.\d+/, "");
+        }
+
+        function collectSeries(initialPage, ctx) {
             var allNames = [];
             var noNewCount = 0;
+            var maxScreens = seriesParser.maxSeriesScreens();
+            var pageResult = null;
 
             sleep(config.pageDelay);
-            for (var scroll = 0; scroll < config.maxSeriesScrolls; scroll++) {
+            for (var scroll = 0; scroll < maxScreens; scroll++) {
                 var pageNames;
-                if (scroll === 0 && initialPage && initialPage.ocrResult) {
+                pageResult = null;
+                if (scroll === 0 && initialPage && initialPage.ocrResult && !seriesParser.prefersFreshImage()) {
                     pageNames = seriesParser.extractCompleteCardTitles(
                         initialPage.ocrResult.items || [],
                         initialPage.height || device.height
@@ -1941,7 +2878,18 @@
                         break;
                     }
 
-                    pageNames = seriesParser.readSeriesNames(pageImg, ocr);
+                    try {
+                        pageResult = seriesParser.readSeriesPage(pageImg, ocr, {
+                            runId: ctx && ctx.runId,
+                            account: ctx && ctx.account,
+                            screenIndex: scroll
+                        });
+                        pageNames = pageResult.names || [];
+                    } catch (e) {
+                        warn("Series recognition failed; stop current account: " + e);
+                        pageImg.recycle();
+                        break;
+                    }
                     pageImg.recycle();
                 }
 
@@ -1953,6 +2901,11 @@
                 log("新增剧集 " + newCount + " 个，累计 " + allNames.length + " 个");
 
                 if (allNames.length >= config.maxSeries) {
+                    break;
+                }
+
+                if (pageResult && pageResult.shouldContinue === false) {
+                    log("后端识别要求停止当前账号：" + (pageResult.reason || ""));
                     break;
                 }
 
@@ -2003,7 +2956,7 @@
             return appended;
         }
 
-        function collectAccount(account, outputRecords, observedRecords) {
+        function collectAccount(account, outputRecords, observedRecords, runContext) {
             log("进入账号：" + account.label);
 
             var clickResult = actions.clickAccount(account, ocr);
@@ -2038,8 +2991,11 @@
                     height: tabResult.firstPageHeight
                 };
             }
-            var seriesNames = collectSeries(initialSeriesPage);
             var accountNameForCsv = profileAccountName || account.label;
+            var seriesNames = collectSeries(initialSeriesPage, {
+                runId: runContext && runContext.runId,
+                account: accountNameForCsv
+            });
             var appended = markNewSeries(outputRecords, observedRecords, accountNameForCsv, seriesNames);
             log("账号完成：" + accountNameForCsv + "，完整剧集 " + seriesNames.length + " 个，新增 " + appended + " 个");
 
@@ -2068,7 +3024,7 @@
             return profileName;
         }
 
-        function collectAccountsOnce(outputRecords, observedRecords) {
+        function collectAccountsOnce(outputRecords, observedRecords, runContext) {
             var processedAccounts = {};
             var processedAccountLabels = [];
             var lastAccountLabel = "";
@@ -2184,7 +3140,7 @@
                 lastAccountLabel = targetAccount.label;
                 scannedCount++;
 
-                if (collectAccount(targetAccount, outputRecords, observedRecords)) {
+                if (collectAccount(targetAccount, outputRecords, observedRecords, runContext)) {
                     successCount++;
                 } else {
                     failCount++;
@@ -2338,6 +3294,8 @@
             console.show();
             log("启动关注账号剧集采集");
             log("CSV路径：" + config.csvFile);
+            var runContext = { runId: makeRunId() };
+            log("Run ID: " + runContext.runId);
 
             var standardAccounts = reporter.fetchStandardAccounts();
             if (textUtils.setKnownAccountNames(standardAccounts)) {
@@ -2350,7 +3308,8 @@
 
             var outputRecords = [];
             var observedRecords = [];
-            var summary = collectAccountsOnce(outputRecords, observedRecords);
+            var summary = collectAccountsOnce(outputRecords, observedRecords, runContext);
+            summary.runId = runContext.runId;
 
             finishRun(summary);
 
@@ -2374,6 +3333,21 @@
                 }
             } else {
                 log("本轮没有可上报的剧集识别结果");
+            }
+
+            try {
+                var aiSummary = backendRecognizer.fetchSummary(runContext.runId);
+                if (aiSummary && aiSummary.ok && aiSummary.ai_usage) {
+                    var usage = aiSummary.ai_usage;
+                    log("AI调用次数: " + (usage.calls || 0)
+                        + " 成功: " + (usage.success_calls || 0)
+                        + " 失败: " + (usage.failed_calls || 0)
+                        + " 输入tokens: " + (usage.input_tokens || 0)
+                        + " 输出tokens: " + (usage.output_tokens || 0)
+                        + " 总tokens: " + (usage.total_tokens || 0));
+                }
+            } catch (e) {
+                warn("AI token统计读取失败: " + e);
             }
 
             // 发送心跳

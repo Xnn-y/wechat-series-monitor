@@ -79,9 +79,8 @@ function reportToBackend(outputRecords, summary) {
 
     var collectUrl = serverUrl.replace(/\/+$/, "") + "/api/collect";
 
-    // 生成 run_id
-    var now = new Date();
-    var runId = time.beijingTime().replace(/[:\-\s]/g, "_")
+    // Generate run_id once per collection run. Reuse the recognition run_id when present.
+    var runId = (summary && summary.runId) || time.beijingTime().replace(/[:\-\s]/g, "_")
         .replace(/\.\d+/, "");
 
     // 收集本轮开始时间：取最早记录的采集时间
