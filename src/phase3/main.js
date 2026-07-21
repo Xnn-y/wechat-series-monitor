@@ -118,7 +118,8 @@ function markNewSeries(outputRecords, observedRecords, accountName, seriesNames)
 }
 
 function collectAccount(account, outputRecords, observedRecords, runContext) {
-    log("进入账号：" + account.label);
+    var expectedAccountName = runContext && runContext.expectedAccountName;
+    log("进入账号：" + account.label + (expectedAccountName ? "，标准账号：" + expectedAccountName : ""));
 
     var clickResult = actions.clickAccount(account, ocr);
     if (!clickResult.success) {
@@ -131,7 +132,7 @@ function collectAccount(account, outputRecords, observedRecords, runContext) {
         clickResult.img.getHeight(),
         account.label
     );
-    profileAccountName = pickTrustedProfileAccountName(account.label, profileAccountName);
+    profileAccountName = pickTrustedProfileAccountName(account.label, profileAccountName, expectedAccountName);
     if (profileAccountName && profileAccountName !== account.label) {
         log("账号名以主页识别为准：" + account.label + " -> " + profileAccountName);
     }
@@ -152,7 +153,7 @@ function collectAccount(account, outputRecords, observedRecords, runContext) {
             height: tabResult.firstPageHeight
         };
     }
-    var accountNameForCsv = profileAccountName || account.label;
+    var accountNameForCsv = expectedAccountName || profileAccountName || account.label;
     var seriesNames = collectSeries(initialSeriesPage, {
         runId: runContext && runContext.runId,
         account: accountNameForCsv
@@ -165,9 +166,20 @@ function collectAccount(account, outputRecords, observedRecords, runContext) {
     return true;
 }
 
-function pickTrustedProfileAccountName(listName, profileName) {
+function pickTrustedProfileAccountName(listName, profileName, expectedName) {
     listName = accountParser.cleanAccountLabel(listName || "");
     profileName = accountParser.cleanAccountLabel(profileName || "");
+    expectedName = accountParser.cleanAccountLabel(expectedName || "");
+    if (expectedName) {
+        var profileSimilarity = profileName ? textUtils.similarityRatio(expectedName, profileName) : 0;
+        var listSimilarity = listName ? textUtils.similarityRatio(expectedName, listName) : 0;
+        if (profileName && profileSimilarity < 0.55 && listSimilarity < 0.55) {
+            warn("标准账号顺序映射但 OCR 相似度偏低：" + expectedName
+                + " / list=" + listName + " sim=" + Math.round(listSimilarity * 100)
+                + " / profile=" + profileName + " sim=" + Math.round(profileSimilarity * 100));
+        }
+        return expectedName;
+    }
     if (!profileName || profileName === listName) return listName;
     if (textUtils.hasTraditionalChinese(profileName)) {
         log("主页账号名含繁体，保留列表名：" + listName + " / " + profileName);
@@ -196,6 +208,12 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
     var anchorSeekPages = 0;
     var revealNextPages = 0;
     var targetAccountCount = 0;
+    var standardAccounts = textUtils.getKnownAccountNames();
+    var useStandardOrder = config.standardAccountOrderMode === true && standardAccounts && standardAccounts.length > 0;
+    if (useStandardOrder) {
+        targetAccountCount = standardAccounts.length;
+        log("使用标准账号库顺序遍历，目标账号数 " + targetAccountCount);
+    }
     var endedOnFollowingList = true;
     var endReason = "unknown";
 
@@ -214,7 +232,7 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
             break;
         }
         var ocrResult = ocr.ocrScreen(img, null, "account");
-        if (targetAccountCount === 0) {
+        if (!useStandardOrder && targetAccountCount === 0) {
             var followTotal = accountParser.extractFollowTotal(ocrResult);
             if (followTotal > 1) {
                 targetAccountCount = followTotal - 1;
@@ -226,7 +244,6 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
 
         var targetAccount = null;
         var candidates = [];
-        var knownCandidates = [];
         var lastVisibleY = -1;
         visibleAccounts.forEach(function (account) {
             if (sameAccountLabel(account.label, lastAccountLabel)) {
@@ -238,23 +255,22 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
             }
 
             candidates.push(account);
-            if (textUtils.isKnownAccountName(account.label)) {
-                knownCandidates.push(account);
-            }
         });
 
         log("关注列表第 " + (step + 1) + " 次扫描，识别账号："
             + visibleAccounts.map(function (item) { return item.label; }).join(" | "));
 
-        if (config.allowUnknownAccounts !== true && knownCandidates.length < candidates.length) {
-            log("忽略非标准账号候选：" + candidates.filter(function (item) {
-                return !textUtils.isKnownAccountName(item.label);
-            }).map(function (item) { return item.label; }).join(" | "));
+        var pickCandidates = candidates;
+        if (!useStandardOrder && config.allowUnknownAccounts !== true) {
+            pickCandidates = candidates.filter(function (item) {
+                return textUtils.isKnownAccountName(item.label);
+            });
+            if (pickCandidates.length < candidates.length) {
+                log("忽略非标准账号候选：" + candidates.filter(function (item) {
+                    return !textUtils.isKnownAccountName(item.label);
+                }).map(function (item) { return item.label; }).join(" | "));
+            }
         }
-
-        var pickCandidates = (config.allowUnknownAccounts === true && knownCandidates.length === 0)
-            ? candidates
-            : knownCandidates;
         var pickResult = pickNextAccount(pickCandidates, lastVisibleY, lastAccountLabel);
         targetAccount = pickResult.account;
 
@@ -299,9 +315,16 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
         revealNextPages = 0;
         rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
         lastAccountLabel = targetAccount.label;
+        var expectedAccountName = useStandardOrder ? standardAccounts[scannedCount] : "";
         scannedCount++;
 
-        if (collectAccount(targetAccount, outputRecords, observedRecords, runContext)) {
+        var accountRunContext = {};
+        for (var rk in (runContext || {})) {
+            if ((runContext || {}).hasOwnProperty(rk)) accountRunContext[rk] = runContext[rk];
+        }
+        accountRunContext.expectedAccountName = expectedAccountName;
+
+        if (collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext)) {
             successCount++;
         } else {
             failCount++;
