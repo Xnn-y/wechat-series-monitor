@@ -3004,12 +3004,18 @@
 
             screen.goBack();
             sleep(config.pageDelay);
-            return true;
+            return { success: true, accountName: accountNameForCsv };
         }
 
         function pickTrustedProfileAccountName(listName, profileName) {
             listName = accountParser.cleanAccountLabel(listName || "");
             profileName = accountParser.cleanAccountLabel(profileName || "");
+            if (profileName && textUtils.isKnownAccountName(profileName)) {
+                if (profileName !== listName) {
+                    log("主页账号名命中标准账号库，修正列表OCR：" + listName + " -> " + profileName);
+                }
+                return profileName;
+            }
             if (!profileName || profileName === listName) return listName;
             if (textUtils.hasTraditionalChinese(profileName)) {
                 log("主页账号名含繁体，保留列表名：" + listName + " / " + profileName);
@@ -3156,7 +3162,12 @@
                     if ((runContext || {}).hasOwnProperty(rk)) accountRunContext[rk] = runContext[rk];
                 }
 
-                if (collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext)) {
+                var collectResult = collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext);
+                if (collectResult && collectResult.success) {
+                    if (collectResult.accountName) {
+                        lastAccountLabel = collectResult.accountName;
+                        rememberProcessedAccount(processedAccounts, processedAccountLabels, collectResult.accountName);
+                    }
                     successCount++;
                 } else {
                     failCount++;
