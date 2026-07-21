@@ -1613,7 +1613,6 @@
             title = extractDecoratedTitle(title);
             title = text.toSimplified(text.clean(title))
                 .replace(/\s+/g, "")
-                .replace(/^\d+/, "")
                 .replace(/[《》「」『』【】]/g, "")
                 .replace(/^[\-—–_~·•.。:：，,、]+/, "")
                 .replace(/[\-—–_~·•.。；;：:，,、]+$/g, "");

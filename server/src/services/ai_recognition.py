@@ -234,7 +234,6 @@ def extract_titles(cards: List[Dict[str, Any]]) -> List[str]:
 
 def clean_title(value: Any) -> str:
     title = sanitize_series_title(str(value or "").strip())
-    title = re.sub(r"^\d+", "", title)
     title = re.sub(r"^[,:]+|[,:]+$", "", title)
     return title
 

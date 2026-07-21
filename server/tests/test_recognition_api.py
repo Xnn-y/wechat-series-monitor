@@ -79,3 +79,26 @@ def test_recognize_series_no_new_stop():
     assert data["new_titles"] == []
     assert data["should_continue"] is False
     assert data["reason"] == "no_new_series_limit"
+
+
+def test_recognize_series_keeps_leading_digits():
+    app = create_app()
+    client = app.test_client()
+    run_id = "test_leading_digits"
+
+    resp = client.post(
+        "/api/collector/series/recognize",
+        json={
+            "run_id": run_id,
+            "account": "account_a",
+            "screen_index": 0,
+            "image_base64": IMAGE_BASE64,
+            "image_format": "jpg",
+            "mock_titles": ["1980的救赎"],
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["titles"] == ["1980的救赎"]
