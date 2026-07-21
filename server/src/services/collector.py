@@ -17,6 +17,70 @@ def normalize_text(text: str) -> str:
     return text.lower()
 
 
+def similar_series_key(text: str) -> str:
+    return re.sub(r"[\u3000\s,，、。:：；;！？!?（）()\[\]【】《》\"'“”‘’._\-—–·|/\\]+", "", str(text or "")).lower()
+
+
+def edit_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost))
+        prev = curr
+    distance = prev[-1]
+    return 1.0 - distance / max(len(a), len(b))
+
+
+def char_overlap_ratio(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    matched = sum(1 for ch in shorter if ch in longer)
+    return matched / len(shorter)
+
+
+def is_highly_similar_series_title(a: str, b: str) -> bool:
+    ak = similar_series_key(a)
+    bk = similar_series_key(b)
+    if not ak or not bk:
+        return False
+    if ak == bk:
+        return True
+    min_len = min(len(ak), len(bk))
+    max_len = max(len(ak), len(bk))
+    if min_len < 8:
+        return False
+    length_gap = max_len - min_len
+    edit = edit_similarity(ak, bk)
+    overlap = char_overlap_ratio(ak, bk)
+    if length_gap <= 2 and edit >= 0.92 and overlap >= 0.96:
+        return True
+    if min_len >= 14 and length_gap <= 3 and edit >= 0.90 and overlap >= 0.95:
+        return True
+    return False
+
+
+def has_similar_series_for_account(conn: sqlite3.Connection, account_norm: str, series_title: str) -> bool:
+    rows = conn.execute(
+        """SELECT series_name_raw
+           FROM series_records
+           WHERE account_name_normalized = ?
+           ORDER BY created_at DESC
+           LIMIT 200""",
+        (account_norm,),
+    ).fetchall()
+    for row in rows:
+        if is_highly_similar_series_title(series_title, row["series_name_raw"]):
+            return True
+    return False
+
+
 def sanitize_series_title(text: str) -> str:
     """剧名只保留中文、字母、数字、逗号和冒号。"""
     if not text:
@@ -134,6 +198,10 @@ def process_collect(payload: dict) -> dict:
             series_norm = normalize_text(series_corrected)
 
             if not account_norm or not series_norm:
+                continue
+
+            if has_similar_series_for_account(conn, account_norm, series_corrected):
+                duplicates += 1
                 continue
 
             try:

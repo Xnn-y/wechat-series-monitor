@@ -214,8 +214,53 @@ def test_series_title_symbol_sanitize():
     print("  [PASS] 剧名符号清洗 -> 仅保留逗号和冒号")
 
 
+def test_similar_series_dedup_same_account_only():
+    """8. 同账号下高度相似剧名应视为重复，不影响其他账号"""
+    app = create_app()
+    client = app.test_client()
+
+    payload = {
+        "device": "test_phone_01",
+        "run_id": "20260709_test_similar_titles",
+        "started_at": "2026-07-09 17:00:00",
+        "finished_at": "2026-07-09 17:05:00",
+        "records": [
+            {
+                "account_name": "美好时光短剧场",
+                "series_name": "后妈说她衣柜里没有人直播间网友笑疯了",
+                "episodes": "",
+                "collected_at": "2026-07-09 17:01:00",
+            },
+            {
+                "account_name": "美好时光短剧场",
+                "series_name": "后妈说她衣柜里没有人直播间网友疯了",
+                "episodes": "",
+                "collected_at": "2026-07-09 17:02:00",
+            },
+            {
+                "account_name": "另一个账号",
+                "series_name": "后妈说她衣柜里没有人直播间网友疯了",
+                "episodes": "",
+                "collected_at": "2026-07-09 17:03:00",
+            },
+        ],
+    }
+
+    resp = client.post(
+        "/api/collect",
+        json=payload,
+        headers={"X-Collector-Token": "dev_token"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["received"] == 3
+    assert data["inserted"] == 2
+    assert data["duplicates"] == 1
+    print("  [PASS] 同账号高度相似剧名去重 -> inserted=2 duplicates=1")
+
+
 def test_get_records():
-    """8. 查询记录"""
+    """9. 查询记录"""
     app = create_app()
     client = app.test_client()
 
@@ -245,7 +290,7 @@ def test_get_records():
 
 
 def test_get_runs():
-    """9. 查询采集轮次"""
+    """10. 查询采集轮次"""
     app = create_app()
     client = app.test_client()
 
@@ -258,7 +303,7 @@ def test_get_runs():
 
 
 def test_get_summary():
-    """10. 团队后台总览"""
+    """11. 团队后台总览"""
     app = create_app()
     client = app.test_client()
 
@@ -278,7 +323,7 @@ def test_get_summary():
 
 
 def test_export_csv():
-    """11. CSV 导出"""
+    """12. CSV 导出"""
     app = create_app()
     client = app.test_client()
 
@@ -299,6 +344,7 @@ if __name__ == "__main__":
     test_dedup()
     test_normalization_dedup()
     test_series_title_symbol_sanitize()
+    test_similar_series_dedup_same_account_only()
     test_get_records()
     test_get_runs()
     test_get_summary()

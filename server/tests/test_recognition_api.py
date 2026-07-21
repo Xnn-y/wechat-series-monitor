@@ -12,10 +12,21 @@ os.environ["AI_MAX_SERIES_PER_ACCOUNT"] = "12"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.app import create_app
+from src.config.settings import settings
+from src.services import recognition_session
 
 
 HEADERS = {"X-Collector-Token": "dev_token"}
 IMAGE_BASE64 = "aGVsbG8="
+
+
+def setup_function():
+    settings.AI_RECOGNITION_PROVIDER = "mock"
+    settings.AI_MAX_SCREENS_PER_ACCOUNT = 6
+    settings.AI_MAX_NO_NEW_SCREENS = 2
+    settings.AI_MAX_SERIES_PER_ACCOUNT = 12
+    settings.AI_MAX_CALLS_PER_RUN = 120
+    recognition_session.SESSIONS.clear()
 
 
 def test_recognize_series_and_summary():
