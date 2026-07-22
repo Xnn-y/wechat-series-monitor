@@ -45,6 +45,50 @@ def char_overlap_ratio(a: str, b: str) -> float:
     return matched / len(shorter)
 
 
+def account_match_key(text: str, keep_ascii: bool = True) -> str:
+    value = str(text or "").strip().lower()
+    value = re.sub(r"[\u3000\s]+", "", value)
+    # 头像/图标里的英文字母常被拼进账号名前缀，例如 QD驱督教育。
+    value = re.sub(r"^[a-z]+(?=[\u3400-\u9fff])", "", value)
+    value = (
+        value.replace("敦", "教")
+        .replace("数", "教")
+        .replace("－", "-")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("一", "-")
+    )
+    value = re.sub(r"[-_·・.。,:：，、/\\|（）()\[\]【】《》\"'“”‘’]+", "", value)
+    if not keep_ascii:
+        value = re.sub(r"[a-z]+", "", value)
+    return value
+
+
+def account_key_match_score(raw_name: str, standard_name: str) -> float:
+    raw_key = account_match_key(raw_name)
+    standard_key = account_match_key(standard_name)
+    if not raw_key or not standard_key:
+        return 0.0
+    if raw_key == standard_key:
+        return 1.0
+
+    raw_cjk_key = account_match_key(raw_name, keep_ascii=False)
+    standard_cjk_key = account_match_key(standard_name, keep_ascii=False)
+    if raw_cjk_key and standard_cjk_key:
+        if raw_cjk_key == standard_cjk_key and min(len(raw_cjk_key), len(standard_cjk_key)) >= 4:
+            return 0.98
+
+        min_len = min(len(raw_cjk_key), len(standard_cjk_key))
+        max_len = max(len(raw_cjk_key), len(standard_cjk_key))
+        if min_len >= 5 and max_len - min_len <= 2:
+            edit = edit_similarity(raw_cjk_key, standard_cjk_key)
+            overlap = char_overlap_ratio(raw_cjk_key, standard_cjk_key)
+            if edit >= 0.84 and overlap >= 0.84:
+                return min(edit, overlap)
+
+    return 0.0
+
+
 def is_highly_similar_series_title(a: str, b: str) -> bool:
     ak = similar_series_key(a)
     bk = similar_series_key(b)
@@ -85,12 +129,33 @@ def match_standard_account(conn: sqlite3.Connection, account_name: str) -> sqlit
     account_norm = normalize_standard_account_name(account_name)
     if not account_norm:
         return None
-    return conn.execute(
+    exact = conn.execute(
         """SELECT name, normalized_name
            FROM standard_accounts
            WHERE active = 1 AND normalized_name = ?""",
         (account_norm,),
     ).fetchone()
+    if exact:
+        return exact
+
+    rows = conn.execute(
+        """SELECT name, normalized_name
+           FROM standard_accounts
+           WHERE active = 1"""
+    ).fetchall()
+    scored = []
+    for row in rows:
+        score = account_key_match_score(account_name, row["name"])
+        if score >= 0.84:
+            scored.append((score, row))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.03:
+        return None
+    return scored[0][1]
 
 
 def sanitize_series_title(text: str) -> str:
@@ -229,7 +294,7 @@ def process_collect(payload: dict) -> dict:
                        (run_id, account_name_raw, series_name_raw, episodes_raw,
                         account_name_normalized, series_name_normalized, collected_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (run_id, account_raw, series_corrected, episodes_raw,
+                    (run_id, account_corrected, series_corrected, episodes_raw,
                      account_norm, series_norm, collected_at),
                 )
                 inserted += 1

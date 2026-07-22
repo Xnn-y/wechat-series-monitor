@@ -297,8 +297,59 @@ def test_reject_non_standard_account_records():
     print("  [PASS] 非标准账号禁入库 -> rejected_accounts=1")
 
 
+def test_loose_standard_account_match_for_ocr_noise():
+    """10. 标准账号匹配允许头像前缀、连接符、少量 OCR 混淆"""
+    app = create_app()
+    client = app.test_client()
+
+    create_resp = client.post(
+        "/api/standard-accounts",
+        json={"name": "驱督教育-智能ai"},
+        headers=ADMIN_HEADERS,
+    )
+    assert create_resp.status_code == 200
+
+    payload = {
+        "device": "test_phone_01",
+        "run_id": "20260709_test_loose_standard_account",
+        "started_at": "2026-07-09 18:10:00",
+        "finished_at": "2026-07-09 18:15:00",
+        "records": [
+            {
+                "account_name": "QD驱督敦育-智能",
+                "series_name": "头像前缀混入测试",
+                "episodes": "",
+                "collected_at": "2026-07-09 18:11:00",
+            },
+            {
+                "account_name": "驱督数育-智能",
+                "series_name": "末尾ai丢失测试",
+                "episodes": "",
+                "collected_at": "2026-07-09 18:12:00",
+            },
+        ],
+    }
+
+    resp = client.post(
+        "/api/collect",
+        json=payload,
+        headers={"X-Collector-Token": "dev_token"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["received"] == 2
+    assert data["inserted"] == 2
+    assert data["rejected_accounts"] == 0
+
+    resp2 = client.get("/api/records?run_id=20260709_test_loose_standard_account", headers=ADMIN_HEADERS)
+    records = resp2.get_json()["records"]
+    assert len(records) == 2
+    assert {r["account_name_raw"] for r in records} == {"驱督教育-智能ai"}
+    print("  [PASS] 标准账号 OCR 宽松匹配 -> 驱督教育-智能ai")
+
+
 def test_get_records():
-    """10. 查询记录"""
+    """11. 查询记录"""
     app = create_app()
     client = app.test_client()
 
@@ -328,7 +379,7 @@ def test_get_records():
 
 
 def test_get_runs():
-    """11. 查询采集轮次"""
+    """12. 查询采集轮次"""
     app = create_app()
     client = app.test_client()
 
@@ -341,7 +392,7 @@ def test_get_runs():
 
 
 def test_get_summary():
-    """12. 团队后台总览"""
+    """13. 团队后台总览"""
     app = create_app()
     client = app.test_client()
 
@@ -361,7 +412,7 @@ def test_get_summary():
 
 
 def test_export_csv():
-    """13. CSV 导出"""
+    """14. CSV 导出"""
     app = create_app()
     client = app.test_client()
 
@@ -384,8 +435,9 @@ if __name__ == "__main__":
     test_series_title_symbol_sanitize()
     test_similar_series_dedup_same_account_only()
     test_reject_non_standard_account_records()
+    test_loose_standard_account_match_for_ocr_noise()
     test_get_records()
     test_get_runs()
     test_get_summary()
     test_export_csv()
-    print("\n===== 全部 13 项测试通过 ✅ =====")
+    print("\n===== 全部 14 项测试通过 ✅ =====")
