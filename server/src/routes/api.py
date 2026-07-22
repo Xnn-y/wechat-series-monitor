@@ -13,11 +13,7 @@ from src.services import (
     record_heartbeat,
     run_health_check,
 )
-from src.services.recognition_session import (
-    recognize_account_list_screen,
-    recognize_screen,
-    get_summary as get_recognition_summary,
-)
+from src.services.recognition_session import recognize_screen, get_summary as get_recognition_summary
 
 api = Blueprint("api", __name__)
 
@@ -399,30 +395,6 @@ def recognize_series():
     status = 200 if result.get("ok") else 400
     if result.get("reason") in {"ai_error", "missing_image"}:
         status = 200 if result.get("reason") == "ai_error" else 400
-    return jsonify(result), status
-
-
-# ============================================================
-# POST /api/collector/accounts/recognize - AI following-list account recognition
-# ============================================================
-@api.route("/api/collector/accounts/recognize", methods=["POST"])
-@require_token
-def recognize_accounts():
-    payload = request.get_json(silent=True) or {}
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """SELECT name
-               FROM standard_accounts
-               WHERE active = 1
-               ORDER BY id ASC"""
-        ).fetchall()
-        standard_accounts = [r["name"] for r in rows]
-    finally:
-        conn.close()
-
-    result = recognize_account_list_screen(payload, standard_accounts)
-    status = 200 if result.get("ok") or result.get("reason") == "ai_error" else 400
     return jsonify(result), status
 
 

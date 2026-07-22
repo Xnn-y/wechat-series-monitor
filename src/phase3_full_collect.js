@@ -65,12 +65,6 @@
                 fallbackLocalAi: false,
                 debug: true
             },
-            accountListAiFallback: {
-                enabled: true,
-                timeout: 120000,
-                maxCallsPerRun: 40,
-                debug: true
-            },
             aiRecognition: {
                 enabled: true,
                 provider: "volcengine",
@@ -907,39 +901,6 @@
             return JSON.parse(bodyText);
         }
 
-        function recognizeAccountListScreen(ctx, img, ocrAccounts) {
-            var cfg = config.accountListAiFallback || {};
-            if (!cfg.enabled) {
-                throw new Error("account list AI fallback disabled");
-            }
-            var serverUrl = (config.backend && config.backend.serverUrl) || "";
-            var token = (config.backend && config.backend.collectorToken) || "";
-            if (!serverUrl) throw new Error("backend serverUrl is not configured");
-            if (!token) throw new Error("backend collectorToken is not configured");
-
-            var payload = {
-                run_id: (ctx && ctx.runId) || "",
-                screen_index: Number((ctx && ctx.screenIndex) || 0),
-                ocr_accounts: ocrAccounts || [],
-                image_base64: imageToBase64(img),
-                image_format: "jpg"
-            };
-            var url = serverUrl.replace(/\/+$/, "") + "/api/collector/accounts/recognize";
-            var responseText = postJson(url, token, payload, Number(cfg.timeout || 120000));
-            var result = JSON.parse(responseText);
-            if (!result.ok) {
-                throw new Error("backend account recognition failed: " + (result.error || result.reason || responseText));
-            }
-            if (cfg.debug) {
-                var usage = result.usage || {};
-                log("[backend AI account] accounts=" + ((result.accounts || []).length)
-                    + " reason=" + result.reason
-                    + " calls=" + (usage.screen_calls_for_run || 0)
-                    + " tokens=" + (usage.run_total_tokens || usage.total_tokens || 0));
-            }
-            return result;
-        }
-
         function imageToBase64(img) {
             if (images.toBase64) {
                 return images.toBase64(img, "jpg", 82);
@@ -997,7 +958,6 @@
 
         module.exports = {
             recognizeSeriesScreen: recognizeSeriesScreen,
-            recognizeAccountListScreen: recognizeAccountListScreen,
             fetchSummary: fetchSummary
         };
 
@@ -3084,7 +3044,6 @@
             var emptyPages = 0;
             var anchorSeekPages = 0;
             var revealNextPages = 0;
-            var accountAiCalls = 0;
             var targetAccountCount = 0;
             var standardAccounts = textUtils.getKnownAccountNames();
             var useStandardCount = config.standardAccountCountMode === true && standardAccounts && standardAccounts.length > 0;
@@ -3122,25 +3081,6 @@
                     }
                 }
                 var visibleAccounts = accountParser.extractAccounts(ocrResult, img.getHeight());
-                if (shouldUseAccountAiFallback(visibleAccounts, lastAccountLabel, accountAiCalls)) {
-                    try {
-                        var aiAccountResult = backendRecognizer.recognizeAccountListScreen({
-                            runId: runContext && runContext.runId,
-                            screenIndex: step
-                        }, img, visibleAccounts.map(function (item) {
-                            return { label: item.label, y: item.centerY };
-                        }));
-                        accountAiCalls++;
-                        visibleAccounts = mergeAiAccountRows(visibleAccounts, aiAccountResult.accounts || []);
-                        if ((aiAccountResult.accounts || []).length > 0) {
-                            log("关注列表AI兜底账号："
-                                + (aiAccountResult.accounts || []).map(function (item) { return item.name; }).join(" | "));
-                        }
-                    } catch (e) {
-                        accountAiCalls++;
-                        warn("关注列表AI兜底失败，继续使用OCR结果：" + e);
-                    }
-                }
                 img.recycle();
 
                 var targetAccount = null;
@@ -3275,83 +3215,6 @@
             }
             result.account = candidates[0];
             return result;
-        }
-
-        function shouldUseAccountAiFallback(visibleAccounts, lastAccountLabel, aiCalls) {
-            var cfg = config.accountListAiFallback || {};
-            if (cfg.enabled !== true) return false;
-            if (aiCalls >= Number(cfg.maxCallsPerRun || 40)) return false;
-            if (!visibleAccounts || visibleAccounts.length === 0) return true;
-
-            var lastVisible = false;
-            for (var i = 0; i < visibleAccounts.length; i++) {
-                var label = visibleAccounts[i].label || "";
-                if (sameAccountLabel(label, lastAccountLabel)) {
-                    lastVisible = true;
-                }
-                if (!textUtils.isKnownAccountName(label)) return true;
-                if (accountParser.hasNoisyAccountChars(label)) return true;
-            }
-            return !!(lastAccountLabel && !lastVisible);
-        }
-
-        function mergeAiAccountRows(ocrAccounts, aiAccounts) {
-            if (!aiAccounts || !aiAccounts.length) return ocrAccounts || [];
-
-            var result = [];
-            var usedOcr = {};
-            for (var i = 0; i < aiAccounts.length; i++) {
-                var ai = aiAccounts[i] || {};
-                var name = accountParser.cleanAccountLabel(ai.name || "");
-                var y = Number(ai.y || ai.centerY || 0);
-                if (!name || !y) continue;
-
-                var nearestIndex = -1;
-                var nearestGap = 99999;
-                for (var j = 0; j < (ocrAccounts || []).length; j++) {
-                    if (usedOcr[j]) continue;
-                    var gap = Math.abs(Number(ocrAccounts[j].centerY || 0) - y);
-                    if (gap < nearestGap) {
-                        nearestGap = gap;
-                        nearestIndex = j;
-                    }
-                }
-
-                var row;
-                if (nearestIndex >= 0 && nearestGap <= 90) {
-                    usedOcr[nearestIndex] = true;
-                    row = cloneAccountRow(ocrAccounts[nearestIndex]);
-                    row.label = name;
-                    row.centerY = Math.round(y);
-                } else {
-                    row = {
-                        label: name,
-                        centerY: Math.round(y),
-                        top: Math.round(y - 35),
-                        bottom: Math.round(y + 35),
-                        textCenterX: Math.round(device.width * 0.42),
-                        bounds: []
-                    };
-                }
-                result.push(row);
-            }
-
-            for (var k = 0; k < (ocrAccounts || []).length; k++) {
-                if (!usedOcr[k] && textUtils.isKnownAccountName(ocrAccounts[k].label)) {
-                    result.push(ocrAccounts[k]);
-                }
-            }
-
-            result.sort(function (a, b) { return (a.centerY || 0) - (b.centerY || 0); });
-            return result;
-        }
-
-        function cloneAccountRow(row) {
-            var next = {};
-            for (var key in row) {
-                if (row.hasOwnProperty(key)) next[key] = row[key];
-            }
-            return next;
         }
 
         function rememberProcessedAccount(processedMap, processedLabels, label) {

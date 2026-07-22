@@ -4,7 +4,6 @@ import sys
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite:///server/data/collector.test.db"
 os.environ["COLLECTOR_TOKEN"] = "dev_token"
-os.environ["ADMIN_PASSWORD"] = "admin123"
 os.environ["AI_RECOGNITION_PROVIDER"] = "mock"
 os.environ["AI_MAX_SCREENS_PER_ACCOUNT"] = "6"
 os.environ["AI_MAX_NO_NEW_SCREENS"] = "2"
@@ -114,45 +113,3 @@ def test_recognize_series_keeps_leading_digits():
     data = resp.get_json()
     assert data["ok"] is True
     assert data["titles"] == ["1980的救赎"]
-
-
-def test_recognize_account_list_from_standard_accounts():
-    app = create_app()
-    client = app.test_client()
-    run_id = "test_account_list_recognition"
-
-    created = client.post(
-        "/api/standard-accounts",
-        json={"name": "驱督教育-智能ai"},
-        headers={"X-Admin-Password": "admin123"},
-    )
-    assert created.status_code == 200
-
-    resp = client.post(
-        "/api/collector/accounts/recognize",
-        json={
-            "run_id": run_id,
-            "screen_index": 0,
-            "image_base64": IMAGE_BASE64,
-            "image_format": "jpg",
-            "mock_accounts": [
-                {"n": "驱督教育-智能ai", "y": 420},
-                {"n": "不在标准库", "y": 560},
-            ],
-        },
-        headers=HEADERS,
-    )
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data["ok"] is True
-    assert data["accounts"] == [{"name": "驱督教育-智能ai", "y": 420}]
-    assert data["usage"]["screen_calls_for_run"] == 1
-
-    resp2 = client.get(
-        f"/api/collector/series/recognize/summary?run_id={run_id}",
-        headers=HEADERS,
-    )
-    summary = resp2.get_json()
-    assert summary["ok"] is True
-    assert summary["ai_usage"]["calls"] == 1
-    assert summary["ai_usage"]["success_calls"] == 1
