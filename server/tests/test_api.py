@@ -119,9 +119,10 @@ def test_collect_with_token():
     data = resp.get_json()
     assert data["ok"] is True
     assert data["received"] == 3
-    assert data["inserted"] == 2     # 第3条是重复的
+    assert data["inserted"] == 1     # 第2条非标准账号被拒绝，第3条是重复的
     assert data["duplicates"] == 1
-    print(f"  [PASS] POST /api/collect -> received=3 inserted=2 duplicates=1")
+    assert data["rejected_accounts"] == 1
+    print(f"  [PASS] POST /api/collect -> received=3 inserted=1 duplicates=1 rejected_accounts=1")
 
 
 def test_dedup():
@@ -238,7 +239,7 @@ def test_similar_series_dedup_same_account_only():
                 "collected_at": "2026-07-09 17:02:00",
             },
             {
-                "account_name": "另一个账号",
+                "account_name": "快乐时光短剧场",
                 "series_name": "后妈说她衣柜里没有人直播间网友疯了",
                 "episodes": "",
                 "collected_at": "2026-07-09 17:03:00",
@@ -259,8 +260,45 @@ def test_similar_series_dedup_same_account_only():
     print("  [PASS] 同账号高度相似剧名去重 -> inserted=2 duplicates=1")
 
 
+def test_reject_non_standard_account_records():
+    """9. 无法匹配标准账号库的记录禁止入库"""
+    app = create_app()
+    client = app.test_client()
+
+    payload = {
+        "device": "test_phone_01",
+        "run_id": "20260709_test_reject_unknown_account",
+        "started_at": "2026-07-09 18:00:00",
+        "finished_at": "2026-07-09 18:05:00",
+        "records": [
+            {
+                "account_name": "不存在的脏账号",
+                "series_name": "这条不能入库",
+                "episodes": "",
+                "collected_at": "2026-07-09 18:01:00",
+            },
+        ],
+    }
+
+    resp = client.post(
+        "/api/collect",
+        json=payload,
+        headers={"X-Collector-Token": "dev_token"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["received"] == 1
+    assert data["inserted"] == 0
+    assert data["duplicates"] == 0
+    assert data["rejected_accounts"] == 1
+
+    resp2 = client.get("/api/records?run_id=20260709_test_reject_unknown_account", headers=ADMIN_HEADERS)
+    assert resp2.get_json()["total"] == 0
+    print("  [PASS] 非标准账号禁入库 -> rejected_accounts=1")
+
+
 def test_get_records():
-    """9. 查询记录"""
+    """10. 查询记录"""
     app = create_app()
     client = app.test_client()
 
@@ -284,13 +322,13 @@ def test_get_records():
     resp3 = client.get("/api/records?run_id=20260709_test_001", headers=ADMIN_HEADERS)
     data3 = resp3.get_json()
     assert data3["ok"] is True
-    assert data3["total"] == 2
+    assert data3["total"] == 1
     assert all(r["run_id"] == "20260709_test_001" for r in data3["records"])
     print(f"  [PASS] GET /api/records?run_id=20260709_test_001 -> total={data3['total']}")
 
 
 def test_get_runs():
-    """10. 查询采集轮次"""
+    """11. 查询采集轮次"""
     app = create_app()
     client = app.test_client()
 
@@ -303,7 +341,7 @@ def test_get_runs():
 
 
 def test_get_summary():
-    """11. 团队后台总览"""
+    """12. 团队后台总览"""
     app = create_app()
     client = app.test_client()
 
@@ -323,7 +361,7 @@ def test_get_summary():
 
 
 def test_export_csv():
-    """12. CSV 导出"""
+    """13. CSV 导出"""
     app = create_app()
     client = app.test_client()
 
@@ -345,8 +383,9 @@ if __name__ == "__main__":
     test_normalization_dedup()
     test_series_title_symbol_sanitize()
     test_similar_series_dedup_same_account_only()
+    test_reject_non_standard_account_records()
     test_get_records()
     test_get_runs()
     test_get_summary()
     test_export_csv()
-    print("\n===== 全部 11 项测试通过 ✅ =====")
+    print("\n===== 全部 13 项测试通过 ✅ =====")

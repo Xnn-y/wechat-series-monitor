@@ -1,7 +1,7 @@
 """server/src/services/collector.py - 采集数据写入 + 去重"""
 import re
 import sqlite3
-from src.db import get_connection
+from src.db import get_connection, normalize_standard_account_name
 
 
 def normalize_text(text: str) -> str:
@@ -79,6 +79,18 @@ def has_similar_series_for_account(conn: sqlite3.Connection, account_norm: str, 
         if is_highly_similar_series_title(series_title, row["series_name_raw"]):
             return True
     return False
+
+
+def match_standard_account(conn: sqlite3.Connection, account_name: str) -> sqlite3.Row | None:
+    account_norm = normalize_standard_account_name(account_name)
+    if not account_norm:
+        return None
+    return conn.execute(
+        """SELECT name, normalized_name
+           FROM standard_accounts
+           WHERE active = 1 AND normalized_name = ?""",
+        (account_norm,),
+    ).fetchone()
 
 
 def sanitize_series_title(text: str) -> str:
@@ -166,6 +178,7 @@ def process_collect(payload: dict) -> dict:
     received = len(records)
     inserted = 0
     duplicates = 0
+    rejected_accounts = 0
     inserted_records = []
 
     conn = get_connection()
@@ -194,6 +207,12 @@ def process_collect(payload: dict) -> dict:
             series_corrected = sanitize_series_title(apply_ocr_aliases(series_raw, "series"))
 
             # 归一化
+            standard_account = match_standard_account(conn, account_corrected)
+            if not standard_account:
+                rejected_accounts += 1
+                continue
+
+            account_corrected = standard_account["name"]
             account_norm = normalize_text(account_corrected)
             series_norm = normalize_text(series_corrected)
 
@@ -241,5 +260,6 @@ def process_collect(payload: dict) -> dict:
         "received": received,
         "inserted": inserted,
         "duplicates": duplicates,
+        "rejected_accounts": rejected_accounts,
         "inserted_records": inserted_records,
     }
