@@ -118,6 +118,7 @@
             finishBackMaxSteps: 4,
             finishScrollTopSwipes: 8,
             scrollWait: 1800,
+            forceClickSeriesTab: true,
             seriesTabRoi: [0, 0.28, 1, 0.15],
             csvDir: dataDir,
             csvFile: joinPath(dataDir, "series_data.csv"),
@@ -2426,7 +2427,7 @@
                         firstPageHeight: h
                     };
                 } else if (looksLikeSeriesPage(ocrResult, w, h) && forceClickTab) {
-                    log("账号要求强制点击剧集Tab，忽略已在剧集页判断：" + options.accountLabel);
+                    log("强制点击剧集Tab，忽略已在剧集页判断：" + options.accountLabel);
                 }
 
                 var best = null;
@@ -2465,6 +2466,7 @@
         }
 
         function shouldForceClickSeriesTab(accountLabel) {
+            if (config.forceClickSeriesTab === true) return true;
             var normalized = text.canonicalizeKnownAccountName(accountLabel || "");
             return normalized === "天使不会哭呀";
         }

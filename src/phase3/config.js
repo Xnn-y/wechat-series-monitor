@@ -92,6 +92,7 @@ var config = {
     finishBackMaxSteps: 4,
     finishScrollTopSwipes: 8,
     scrollWait: 1800,
+    forceClickSeriesTab: true,
     seriesTabRoi: [0, 0.28, 1, 0.15],
     csvDir: dataDir,
     csvFile: joinPath(dataDir, "series_data.csv"),
