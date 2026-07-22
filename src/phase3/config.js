@@ -43,6 +43,7 @@ var config = {
         enabled: true,
         timeout: 120000,
         maxCallsPerRun: 40,
+        maxFirstAccountYRatio: 0.34,
         debug: true
     },
     aiRecognition: {

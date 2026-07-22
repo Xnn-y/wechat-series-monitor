@@ -69,6 +69,7 @@
                 enabled: true,
                 timeout: 120000,
                 maxCallsPerRun: 40,
+                maxFirstAccountYRatio: 0.34,
                 debug: true
             },
             aiRecognition: {
@@ -3201,7 +3202,9 @@
                 runId: runContext && runContext.runId,
                 screenIndex: screenIndex
             }, img, []);
-            return normalizeAiAccountRows(aiAccountResult.accounts || []);
+            var accounts = normalizeAiAccountRows(aiAccountResult.accounts || []);
+            ensureAccountAiDidNotSkipTop(accounts);
+            return accounts;
         }
 
         function normalizeAiAccountRows(aiAccounts) {
@@ -3235,6 +3238,14 @@
             var topRatio = config.accountSafeTopRatio || 0.16;
             var bottomRatio = config.accountSafeBottomRatio || 0.97;
             return y >= device.height * topRatio && y <= device.height * bottomRatio;
+        }
+
+        function ensureAccountAiDidNotSkipTop(accounts) {
+            if (!accounts || !accounts.length) return;
+            var maxFirstY = device.height * Number((config.accountListAiFallback && config.accountListAiFallback.maxFirstAccountYRatio) || 0.34);
+            if (accounts[0].centerY > maxFirstY) {
+                throw new Error("ACCOUNT_AI_TOP_ROWS_MISSING:first=" + accounts[0].label + " y=" + accounts[0].centerY);
+            }
         }
 
         function filterNewAccountRows(visibleAccounts, processedAccounts, processedAccountLabels) {
