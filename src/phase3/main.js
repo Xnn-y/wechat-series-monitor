@@ -174,6 +174,12 @@ function pickTrustedProfileAccountName(listName, profileName) {
         }
         return profileName;
     }
+    if (textUtils.isKnownAccountName(listName)) {
+        if (profileName && profileName !== listName) {
+            log("列表账号来自标准库，忽略非标准主页名：" + listName + " / " + profileName);
+        }
+        return listName;
+    }
     if (!profileName || profileName === listName) return listName;
     if (textUtils.hasTraditionalChinese(profileName)) {
         log("主页账号名含繁体，保留列表名：" + listName + " / " + profileName);
@@ -194,24 +200,17 @@ function pickTrustedProfileAccountName(listName, profileName) {
 function collectAccountsOnce(outputRecords, observedRecords, runContext) {
     var processedAccounts = {};
     var processedAccountLabels = [];
-    var lastAccountLabel = "";
     var scannedCount = 0;
     var successCount = 0;
     var failCount = 0;
     var emptyPages = 0;
-    var anchorSeekPages = 0;
-    var revealNextPages = 0;
     var accountAiCalls = 0;
     var targetAccountCount = 0;
     var standardAccounts = textUtils.getKnownAccountNames();
     var useStandardCount = config.standardAccountCountMode === true && standardAccounts && standardAccounts.length > 0;
-    var useStandardOrder = config.standardAccountOrderMode === true && standardAccounts && standardAccounts.length > 0;
     if (useStandardCount) {
         targetAccountCount = standardAccounts.length;
         log("使用标准账号库数量控制遍历，目标账号数 " + targetAccountCount);
-    }
-    if (useStandardOrder) {
-        warn("standardAccountOrderMode 已不建议使用：标准库顺序与关注列表顺序不一致时会错配账号名");
     }
     var endedOnFollowingList = true;
     var endReason = "unknown";
@@ -230,126 +229,71 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
             endReason = "capture_failed";
             break;
         }
-        var ocrResult = ocr.ocrScreen(img, null, "account");
-        if (!useStandardCount && targetAccountCount === 0) {
-            var followTotal = accountParser.extractFollowTotal(ocrResult);
-            if (followTotal > 1) {
-                targetAccountCount = followTotal - 1;
-                log("关注总数 " + followTotal + "，排除自己后需遍历 " + targetAccountCount + " 个账号");
-            }
-        }
-        var visibleAccounts = accountParser.extractAccounts(ocrResult, img.getHeight());
-        if (shouldUseAccountAiFallback(visibleAccounts, lastAccountLabel, accountAiCalls)) {
-            try {
-                var aiAccountResult = backendRecognizer.recognizeAccountListScreen({
-                    runId: runContext && runContext.runId,
-                    screenIndex: step
-                }, img, visibleAccounts.map(function (item) {
-                    return { label: item.label, y: item.centerY };
-                }));
-                accountAiCalls++;
-                visibleAccounts = mergeAiAccountRows(visibleAccounts, aiAccountResult.accounts || []);
-                if ((aiAccountResult.accounts || []).length > 0) {
-                    log("关注列表AI兜底账号："
-                        + (aiAccountResult.accounts || []).map(function (item) { return item.name; }).join(" | "));
-                }
-            } catch (e) {
-                accountAiCalls++;
-                warn("关注列表AI兜底失败，继续使用OCR结果：" + e);
-            }
+
+        var visibleAccounts;
+        try {
+            visibleAccounts = recognizeAccountScreenByAi(img, runContext, step, accountAiCalls);
+            accountAiCalls++;
+        } catch (e) {
+            accountAiCalls++;
+            warn("关注列表AI识别失败，结束遍历以避免脏账号入库：" + e);
+            img.recycle();
+            endedOnFollowingList = false;
+            endReason = "account_ai_failed";
+            break;
         }
         img.recycle();
 
-        var targetAccount = null;
-        var candidates = [];
-        var lastVisibleY = -1;
-        visibleAccounts.forEach(function (account) {
-            if (sameAccountLabel(account.label, lastAccountLabel)) {
-                lastVisibleY = account.centerY;
-            }
-
-            if (isProcessedAccount(processedAccounts, processedAccountLabels, account.label)) {
-                return;
-            }
-
-            candidates.push(account);
-        });
-
-        log("关注列表第 " + (step + 1) + " 次扫描，识别账号："
+        log("关注列表第 " + (step + 1) + " 屏AI识别账号："
             + visibleAccounts.map(function (item) { return item.label; }).join(" | "));
 
-        var pickCandidates = candidates;
-        if (config.allowUnknownAccounts !== true) {
-            pickCandidates = candidates.filter(function (item) {
-                return textUtils.isKnownAccountName(item.label);
-            });
-            if (pickCandidates.length < candidates.length) {
-                log("忽略非标准账号候选：" + candidates.filter(function (item) {
-                    return !textUtils.isKnownAccountName(item.label);
-                }).map(function (item) { return item.label; }).join(" | "));
-            }
-        }
-        var pickResult = pickNextAccount(pickCandidates, lastVisibleY, lastAccountLabel);
-        targetAccount = pickResult.account;
-
-        if (!targetAccount) {
-            if (lastAccountLabel) {
-                if (pickResult.anchorVisible) {
-                    anchorSeekPages = 0;
-                    revealNextPages++;
-                    if (revealNextPages >= (config.maxRevealNextPages || 5)) {
-                        warn("连续无法露出上次账号后的下一行，按关注列表已到底处理：" + lastAccountLabel);
-                        endReason = "reached_list_bottom";
-                        break;
-                    }
-                    log("上次账号仍在屏幕内但下一行未完整露出，继续下滑露出下一账号：" + lastAccountLabel);
-                    screen.scrollDownRevealNextAccount();
-                    sleep(config.scrollWait);
-                    continue;
-                }
-                anchorSeekPages++;
-                if (anchorSeekPages >= (config.maxAnchorSeekPages || 8)) {
-                    warn("连续找不到上次账号锚点，结束遍历：" + lastAccountLabel);
-                    endReason = "anchor_lost";
-                    break;
-                }
-                screen.scrollDownSmall();
-                sleep(config.scrollWait);
-                continue;
-            }
+        var pageAccounts = filterNewAccountRows(visibleAccounts, processedAccounts, processedAccountLabels);
+        if (!pageAccounts.length) {
             emptyPages++;
             if (emptyPages >= config.maxEmptyAccountPages) {
-                log("连续没有新账号，结束关注列表遍历");
+                log("连续 " + emptyPages + " 屏没有新标准账号，结束关注列表遍历");
                 endReason = "no_new_accounts";
                 break;
             }
-            screen.scrollDownSmall();
+            screen.scrollDownRevealNextAccount();
             sleep(config.scrollWait);
             continue;
         }
 
         emptyPages = 0;
-        anchorSeekPages = 0;
-        revealNextPages = 0;
-        rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
-        lastAccountLabel = targetAccount.label;
-        scannedCount++;
+        log("本屏待遍历标准账号：" + pageAccounts.map(function (item) { return item.label; }).join(" | "));
+        for (var pi = 0; pi < pageAccounts.length; pi++) {
+            if (targetAccountCount > 0 && scannedCount >= targetAccountCount) break;
 
-        var accountRunContext = {};
-        for (var rk in (runContext || {})) {
-            if ((runContext || {}).hasOwnProperty(rk)) accountRunContext[rk] = runContext[rk];
-        }
+            var targetAccount = pageAccounts[pi];
+            rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
+            scannedCount++;
 
-        var collectResult = collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext);
-        if (collectResult && collectResult.success) {
-            if (collectResult.accountName) {
-                lastAccountLabel = collectResult.accountName;
-                rememberProcessedAccount(processedAccounts, processedAccountLabels, collectResult.accountName);
+            var accountRunContext = {};
+            for (var rk in (runContext || {})) {
+                if ((runContext || {}).hasOwnProperty(rk)) accountRunContext[rk] = runContext[rk];
             }
-            successCount++;
-        } else {
-            failCount++;
+
+            var collectResult = collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext);
+            if (collectResult && collectResult.success) {
+                if (collectResult.accountName) {
+                    rememberProcessedAccount(processedAccounts, processedAccountLabels, collectResult.accountName);
+                }
+                successCount++;
+            } else {
+                failCount++;
+            }
         }
+
+        if (targetAccountCount > 0 && scannedCount >= targetAccountCount) {
+            log("已遍历关注账号数 " + scannedCount + "/" + targetAccountCount + "，结束");
+            endReason = "scanned_all_accounts";
+            break;
+        }
+
+        log("本屏账号处理完成，向下滑动识别下一屏");
+        screen.scrollDownRevealNextAccount();
+        sleep(config.scrollWait);
     }
 
     return {
@@ -359,6 +303,66 @@ function collectAccountsOnce(outputRecords, observedRecords, runContext) {
         endedOnFollowingList: endedOnFollowingList,
         endReason: endReason
     };
+}
+
+function recognizeAccountScreenByAi(img, runContext, screenIndex, aiCalls) {
+    var cfg = config.accountListAiFallback || {};
+    if (cfg.enabled !== true) {
+        throw new Error("account list AI is disabled");
+    }
+    if (aiCalls >= Number(cfg.maxCallsPerRun || 40)) {
+        throw new Error("account list AI maxCallsPerRun reached");
+    }
+
+    var aiAccountResult = backendRecognizer.recognizeAccountListScreen({
+        runId: runContext && runContext.runId,
+        screenIndex: screenIndex
+    }, img, []);
+    return normalizeAiAccountRows(aiAccountResult.accounts || []);
+}
+
+function normalizeAiAccountRows(aiAccounts) {
+    var result = [];
+    var seen = {};
+    for (var i = 0; i < (aiAccounts || []).length; i++) {
+        var ai = aiAccounts[i] || {};
+        var name = accountParser.cleanAccountLabel(ai.name || "");
+        var y = Number(ai.y || ai.centerY || 0);
+        if (!name || !y) continue;
+        if (!textUtils.isKnownAccountName(name)) continue;
+        if (!isSafeAiAccountY(y)) continue;
+
+        var key = textUtils.normalizeRecordKey(name);
+        if (!key || seen[key]) continue;
+        seen[key] = true;
+        result.push({
+            label: name,
+            centerY: Math.round(y),
+            top: Math.round(y - 35),
+            bottom: Math.round(y + 35),
+            textCenterX: Math.round(device.width * 0.42),
+            bounds: []
+        });
+    }
+    result.sort(function (a, b) { return (a.centerY || 0) - (b.centerY || 0); });
+    return result;
+}
+
+function isSafeAiAccountY(y) {
+    var topRatio = config.accountSafeTopRatio || 0.16;
+    var bottomRatio = config.accountSafeBottomRatio || 0.97;
+    return y >= device.height * topRatio && y <= device.height * bottomRatio;
+}
+
+function filterNewAccountRows(visibleAccounts, processedAccounts, processedAccountLabels) {
+    var result = [];
+    for (var i = 0; i < (visibleAccounts || []).length; i++) {
+        var account = visibleAccounts[i];
+        if (!account || !textUtils.isKnownAccountName(account.label)) continue;
+        if (isProcessedAccount(processedAccounts, processedAccountLabels, account.label)) continue;
+        result.push(account);
+    }
+    return result;
 }
 
 function pickNextAccount(candidates, lastVisibleY, lastAccountLabel) {
