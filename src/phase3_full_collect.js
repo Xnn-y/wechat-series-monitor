@@ -3085,10 +3085,13 @@
         function collectAccountsOnce(outputRecords, observedRecords, runContext) {
             var processedAccounts = {};
             var processedAccountLabels = [];
+            var lastAccountLabel = "";
             var scannedCount = 0;
             var successCount = 0;
             var failCount = 0;
             var emptyPages = 0;
+            var anchorSeekPages = 0;
+            var revealNextPages = 0;
             var accountAiCalls = 0;
             var targetAccountCount = 0;
             var standardAccounts = textUtils.getKnownAccountNames();
@@ -3129,56 +3132,85 @@
                 }
                 img.recycle();
 
-                log("关注列表第 " + (step + 1) + " 屏AI识别账号："
+                var targetAccount = null;
+                var candidates = [];
+                var lastVisibleY = -1;
+                visibleAccounts.forEach(function (account) {
+                    if (sameAccountLabel(account.label, lastAccountLabel)) {
+                        lastVisibleY = account.centerY;
+                    }
+
+                    if (isProcessedAccount(processedAccounts, processedAccountLabels, account.label)) {
+                        return;
+                    }
+
+                    candidates.push(account);
+                });
+
+                log("关注列表第 " + (step + 1) + " 次AI扫描，识别账号："
                     + visibleAccounts.map(function (item) { return item.label; }).join(" | "));
 
-                var pageAccounts = filterNewAccountRows(visibleAccounts, processedAccounts, processedAccountLabels);
-                if (!pageAccounts.length) {
+                var pickResult = pickNextAccount(candidates, lastVisibleY, lastAccountLabel);
+                targetAccount = pickResult.account;
+
+                if (!targetAccount) {
+                    if (lastAccountLabel) {
+                        if (pickResult.anchorVisible) {
+                            anchorSeekPages = 0;
+                            revealNextPages++;
+                            if (revealNextPages >= (config.maxRevealNextPages || 5)) {
+                                warn("连续无法露出上次账号后的下一行，按关注列表已到底处理：" + lastAccountLabel);
+                                endReason = "reached_list_bottom";
+                                break;
+                            }
+                            log("上次账号仍在屏幕内但下一行未完整露出，继续下滑露出下一账号：" + lastAccountLabel);
+                            screen.scrollDownRevealNextAccount();
+                            sleep(config.scrollWait);
+                            continue;
+                        }
+                        anchorSeekPages++;
+                        if (anchorSeekPages >= (config.maxAnchorSeekPages || 8)) {
+                            warn("连续找不到上次账号锚点，结束遍历：" + lastAccountLabel);
+                            endReason = "anchor_lost";
+                            break;
+                        }
+                        screen.scrollDownSmall();
+                        sleep(config.scrollWait);
+                        continue;
+                    }
                     emptyPages++;
                     if (emptyPages >= config.maxEmptyAccountPages) {
-                        log("连续 " + emptyPages + " 屏没有新标准账号，结束关注列表遍历");
+                        log("连续没有新账号，结束关注列表遍历");
                         endReason = "no_new_accounts";
                         break;
                     }
-                    screen.scrollDownRevealNextAccount();
+                    screen.scrollDownSmall();
                     sleep(config.scrollWait);
                     continue;
                 }
 
                 emptyPages = 0;
-                log("本屏待遍历标准账号：" + pageAccounts.map(function (item) { return item.label; }).join(" | "));
-                for (var pi = 0; pi < pageAccounts.length; pi++) {
-                    if (targetAccountCount > 0 && scannedCount >= targetAccountCount) break;
+                anchorSeekPages = 0;
+                revealNextPages = 0;
+                rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
+                lastAccountLabel = targetAccount.label;
+                scannedCount++;
 
-                    var targetAccount = pageAccounts[pi];
-                    rememberProcessedAccount(processedAccounts, processedAccountLabels, targetAccount.label);
-                    scannedCount++;
-
-                    var accountRunContext = {};
-                    for (var rk in (runContext || {})) {
-                        if ((runContext || {}).hasOwnProperty(rk)) accountRunContext[rk] = runContext[rk];
-                    }
-
-                    var collectResult = collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext);
-                    if (collectResult && collectResult.success) {
-                        if (collectResult.accountName) {
-                            rememberProcessedAccount(processedAccounts, processedAccountLabels, collectResult.accountName);
-                        }
-                        successCount++;
-                    } else {
-                        failCount++;
-                    }
+                var accountRunContext = {};
+                for (var rk in (runContext || {})) {
+                    if ((runContext || {}).hasOwnProperty(rk)) accountRunContext[rk] = runContext[rk];
                 }
 
-                if (targetAccountCount > 0 && scannedCount >= targetAccountCount) {
-                    log("已遍历关注账号数 " + scannedCount + "/" + targetAccountCount + "，结束");
-                    endReason = "scanned_all_accounts";
-                    break;
+                var collectResult = collectAccount(targetAccount, outputRecords, observedRecords, accountRunContext);
+                if (collectResult && collectResult.success) {
+                    if (collectResult.accountName) {
+                        lastAccountLabel = collectResult.accountName;
+                        rememberProcessedAccount(processedAccounts, processedAccountLabels, collectResult.accountName);
+                    }
+                    successCount++;
+                } else {
+                    failCount++;
                 }
-
-                log("本屏账号处理完成，向下滑动识别下一屏");
-                screen.scrollDownRevealNextAccount();
-                sleep(config.scrollWait);
             }
 
             return {
