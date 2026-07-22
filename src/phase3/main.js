@@ -328,7 +328,7 @@ function normalizeAiAccountRows(aiAccounts) {
     var seen = {};
     for (var i = 0; i < (aiAccounts || []).length; i++) {
         var ai = aiAccounts[i] || {};
-        var name = accountParser.cleanAccountLabel(ai.name || "");
+        var name = normalizeBackendAccountName(ai.name || "");
         var y = Number(ai.y || ai.centerY || 0);
         if (!name || !y) continue;
         if (!textUtils.isKnownAccountName(name)) continue;
@@ -350,6 +350,12 @@ function normalizeAiAccountRows(aiAccounts) {
     return result;
 }
 
+function normalizeBackendAccountName(name) {
+    var cleanName = textUtils.clean(name || "");
+    if (!cleanName) return "";
+    return textUtils.canonicalizeKnownAccountName(cleanName);
+}
+
 function isSafeAiAccountY(y) {
     var topRatio = config.accountSafeTopRatio || 0.16;
     var bottomRatio = config.accountSafeBottomRatio || 0.97;
@@ -358,7 +364,10 @@ function isSafeAiAccountY(y) {
 
 function ensureAccountAiDidNotSkipTop(accounts) {
     if (!accounts || !accounts.length) return;
-    var maxFirstY = device.height * Number((config.accountListAiFallback && config.accountListAiFallback.maxFirstAccountYRatio) || 0.34);
+    var cfg = config.accountListAiFallback || {};
+    var ratioLimit = device.height * Number(cfg.maxFirstAccountYRatio || 0.30);
+    var fixedLimit = Number(cfg.maxFirstAccountY || 720);
+    var maxFirstY = Math.min(ratioLimit, fixedLimit);
     if (accounts[0].centerY > maxFirstY) {
         throw new Error("ACCOUNT_AI_TOP_ROWS_MISSING:first=" + accounts[0].label + " y=" + accounts[0].centerY);
     }
@@ -433,7 +442,7 @@ function mergeAiAccountRows(ocrAccounts, aiAccounts) {
     var usedOcr = {};
     for (var i = 0; i < aiAccounts.length; i++) {
         var ai = aiAccounts[i] || {};
-        var name = accountParser.cleanAccountLabel(ai.name || "");
+        var name = normalizeBackendAccountName(ai.name || "");
         var y = Number(ai.y || ai.centerY || 0);
         if (!name || !y) continue;
 
