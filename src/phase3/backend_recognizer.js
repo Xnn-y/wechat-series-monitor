@@ -52,6 +52,39 @@ function fetchSummary(runId) {
     return JSON.parse(bodyText);
 }
 
+function recognizeAccountListScreen(ctx, img, ocrAccounts) {
+    var cfg = config.accountListAiFallback || {};
+    if (!cfg.enabled) {
+        throw new Error("account list AI fallback disabled");
+    }
+    var serverUrl = (config.backend && config.backend.serverUrl) || "";
+    var token = (config.backend && config.backend.collectorToken) || "";
+    if (!serverUrl) throw new Error("backend serverUrl is not configured");
+    if (!token) throw new Error("backend collectorToken is not configured");
+
+    var payload = {
+        run_id: (ctx && ctx.runId) || "",
+        screen_index: Number((ctx && ctx.screenIndex) || 0),
+        ocr_accounts: ocrAccounts || [],
+        image_base64: imageToBase64(img),
+        image_format: "jpg"
+    };
+    var url = serverUrl.replace(/\/+$/, "") + "/api/collector/accounts/recognize";
+    var responseText = postJson(url, token, payload, Number(cfg.timeout || 120000));
+    var result = JSON.parse(responseText);
+    if (!result.ok) {
+        throw new Error("backend account recognition failed: " + (result.error || result.reason || responseText));
+    }
+    if (cfg.debug) {
+        var usage = result.usage || {};
+        log("[backend AI account] accounts=" + ((result.accounts || []).length)
+            + " reason=" + result.reason
+            + " calls=" + (usage.screen_calls_for_run || 0)
+            + " tokens=" + (usage.run_total_tokens || usage.total_tokens || 0));
+    }
+    return result;
+}
+
 function imageToBase64(img) {
     if (images.toBase64) {
         return images.toBase64(img, "jpg", 82);
@@ -109,5 +142,6 @@ function readResponseBody(res) {
 
 module.exports = {
     recognizeSeriesScreen: recognizeSeriesScreen,
+    recognizeAccountListScreen: recognizeAccountListScreen,
     fetchSummary: fetchSummary
 };

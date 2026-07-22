@@ -39,6 +39,12 @@ var config = {
         fallbackLocalAi: false,
         debug: true
     },
+    accountListAiFallback: {
+        enabled: true,
+        timeout: 120000,
+        maxCallsPerRun: 40,
+        debug: true
+    },
     aiRecognition: {
         enabled: true,
         provider: "volcengine",

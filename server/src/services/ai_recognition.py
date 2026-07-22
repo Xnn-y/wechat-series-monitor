@@ -65,6 +65,57 @@ def recognize_series_image(image_base64: str, image_format: str = "jpg", mock_ti
     }
 
 
+def recognize_account_list_image(
+    image_base64: str,
+    image_format: str = "jpg",
+    standard_accounts=None,
+    mock_accounts=None,
+) -> Dict[str, Any]:
+    provider = (settings.AI_RECOGNITION_PROVIDER or "volcengine").strip().lower()
+    started = time.time()
+    standard_accounts = [str(name).strip() for name in (standard_accounts or []) if str(name).strip()]
+
+    if provider == "mock":
+        accounts = extract_accounts_from_payload({"accounts": mock_accounts or []}, standard_accounts)
+        return {
+            "ok": True,
+            "accounts": accounts,
+            "latency_ms": int((time.time() - started) * 1000),
+            "usage": empty_usage(),
+            "raw_usage": {},
+        }
+
+    if provider != "volcengine":
+        raise AiRecognitionError(f"unsupported AI provider: {provider}", fatal=True)
+    if not settings.ARK_API_KEY:
+        raise AiRecognitionError("ARK_API_KEY is not configured", fatal=True)
+
+    payload = {
+        "model": settings.AI_RECOGNITION_MODEL,
+        "max_output_tokens": min(settings.AI_RECOGNITION_MAX_OUTPUT_TOKENS, 512),
+        "input": [{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": build_account_list_prompt(standard_accounts)},
+                {"type": "input_image", "image_url": image_data_url(image_base64, image_format)},
+            ],
+        }],
+    }
+    apply_thinking_controls(payload)
+    response = post_responses(payload)
+    output_text = extract_output_text(response)
+    parsed = parse_json_output(output_text)
+    accounts = extract_accounts_from_payload(parsed, standard_accounts)
+    usage = extract_usage(response)
+    return {
+        "ok": True,
+        "accounts": accounts,
+        "latency_ms": int((time.time() - started) * 1000),
+        "usage": usage,
+        "raw_usage": response.get("usage") or {},
+    }
+
+
 def build_series_prompt() -> str:
     return "\n".join([
         "You are recognizing a WeChat video account series tab screenshot.",
@@ -82,6 +133,24 @@ def build_series_prompt() -> str:
         "If the episode count is not visible directly below the title, ignore that card.",
         "Do not read poster slogans, large cover text, promotional copy, UI tabs, buttons, or product labels as titles.",
         "If the title wraps to two lines, merge only adjacent title lines in the same gray info area.",
+    ])
+
+
+def build_account_list_prompt(standard_accounts: List[str]) -> str:
+    account_list = " | ".join(standard_accounts)
+    return "\n".join([
+        "You are recognizing a WeChat following-list screenshot.",
+        "Return JSON only. No markdown. No explanation.",
+        "Return the smallest possible JSON object.",
+        'The only allowed output shape is: {"accounts":[{"n":"standard account name","y":320}]}',
+        "Only return accounts visibly present in the following list, from top to bottom.",
+        "n must be exactly one of the allowed standard account names below.",
+        "y is the approximate vertical center pixel of the account row on the screenshot.",
+        "Ignore avatar letters, badges, buttons, follower counts, tabs, recommendations, and profile descriptions.",
+        "If an account text is noisy, choose the closest allowed standard account only when it is clearly the same account.",
+        "If unsure, omit it. Never invent account names outside the allowed list.",
+        "Allowed standard accounts:",
+        account_list,
     ])
 
 
@@ -207,6 +276,49 @@ def extract_titles_from_payload(payload: Dict[str, Any]):
 
     cards = payload.get("seriesCards") or []
     return extract_titles(cards), cards
+
+
+def extract_accounts_from_payload(payload: Dict[str, Any], standard_accounts: List[str]) -> List[Dict[str, Any]]:
+    allowed = {name: name for name in standard_accounts}
+    allowed_key = {account_key(name): name for name in standard_accounts}
+    raw_accounts = payload.get("accounts") or []
+    result = []
+    seen = set()
+    if not isinstance(raw_accounts, list):
+        return result
+
+    for item in raw_accounts:
+        name = ""
+        y = 0
+        if isinstance(item, list) and item:
+            name = str(item[0] or "").strip()
+            if len(item) > 1:
+                y = parse_int(item[1])
+        elif isinstance(item, dict):
+            name = str(item.get("n") or item.get("name") or "").strip()
+            y = parse_int(item.get("y") or item.get("centerY"))
+
+        canonical = allowed.get(name) or allowed_key.get(account_key(name))
+        if not canonical or canonical in seen:
+            continue
+        if y <= 0:
+            continue
+        seen.add(canonical)
+        result.append({"name": canonical, "y": y})
+
+    result.sort(key=lambda account: account["y"])
+    return result
+
+
+def account_key(value: str) -> str:
+    return re.sub(r"[\u3000\s,，、。:：；;！？!?（）()\[\]【】《》\"'“”‘’._\-—–·|/\\]+", "", str(value or "")).lower()
+
+
+def parse_int(value: Any) -> int:
+    if isinstance(value, int):
+        return value
+    match = re.search(r"\d{1,5}", str(value or ""))
+    return int(match.group(0)) if match else 0
 
 
 def parse_episode_count(value: Any) -> int:

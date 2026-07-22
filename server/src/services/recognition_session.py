@@ -11,7 +11,7 @@ from threading import Lock
 from typing import Any, Dict, List
 
 from src.config.settings import settings
-from src.services.ai_recognition import AiRecognitionError, recognize_series_image
+from src.services.ai_recognition import AiRecognitionError, recognize_account_list_image, recognize_series_image
 
 ROOT = Path(__file__).resolve().parents[2] / "data" / "runtime" / "recognition_runs"
 LOCK = Lock()
@@ -109,6 +109,99 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "new_titles": [],
                 "all_titles_for_account": account_state["titles"],
                 "should_continue": False,
+                "reason": "ai_error",
+                "error": str(exc),
+                "usage": response_usage(session, account_state, {"usage": exc.usage}),
+            }
+
+
+def recognize_account_list_screen(payload: Dict[str, Any], standard_accounts: List[str]) -> Dict[str, Any]:
+    run_id = safe_name(payload.get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S"))
+    screen_index = int(payload.get("screen_index") or 0)
+    image_base64 = str(payload.get("image_base64") or "")
+    image_format = str(payload.get("image_format") or "jpg")
+    account_key = "__account_list__"
+
+    if not image_base64:
+        return {"ok": False, "accounts": [], "reason": "missing_image"}
+
+    with LOCK:
+        session = get_session(run_id)
+        account_state = get_account_state(session, account_key)
+        if session.get("disabled"):
+            return {
+                "ok": True,
+                "accounts": [],
+                "reason": "ai_disabled_for_run",
+                "usage": response_usage(session, account_state, {}),
+            }
+        if session["usage"]["calls"] >= settings.AI_MAX_CALLS_PER_RUN:
+            session["disabled"] = True
+            session["disabled_reason"] = "max_calls_for_run"
+            return {
+                "ok": True,
+                "accounts": [],
+                "reason": "max_calls_for_run",
+                "usage": response_usage(session, account_state, {}),
+            }
+        account_state["screen_calls"] += 1
+        session["usage"]["calls"] += 1
+
+    screenshot_path = save_screenshot(run_id, "account_list", screen_index, image_base64, image_format)
+    try:
+        ai_result = recognize_account_list_image(
+            image_base64=image_base64,
+            image_format=image_format,
+            standard_accounts=standard_accounts,
+            mock_accounts=payload.get("mock_accounts"),
+        )
+        accounts = ai_result.get("accounts") or []
+        with LOCK:
+            session = get_session(run_id)
+            account_state = get_account_state(session, account_key)
+            add_usage(session, ai_result.get("usage") or {})
+            session["usage"]["success_calls"] += 1
+            result = {
+                "ok": True,
+                "accounts": accounts,
+                "reason": "accounts_recognized" if accounts else "no_accounts",
+                "usage": response_usage(session, account_state, ai_result),
+            }
+            append_log(run_id, {
+                "run_id": run_id,
+                "account": account_key,
+                "screen_index": screen_index,
+                "ok": True,
+                "accounts": accounts,
+                "latency_ms": ai_result.get("latency_ms", 0),
+                "usage": ai_result.get("usage") or {},
+            })
+            write_summary(run_id, session)
+        cleanup_screenshot_if_success(screenshot_path)
+        cleanup_old_runs()
+        return result
+    except AiRecognitionError as exc:
+        with LOCK:
+            session = get_session(run_id)
+            account_state = get_account_state(session, account_key)
+            session["usage"]["failed_calls"] += 1
+            if exc.usage:
+                add_usage(session, exc.usage)
+            if exc.fatal:
+                session["disabled"] = True
+                session["disabled_reason"] = str(exc)
+            append_log(run_id, {
+                "run_id": run_id,
+                "account": account_key,
+                "screen_index": screen_index,
+                "ok": False,
+                "error": str(exc),
+                "fatal": exc.fatal,
+            })
+            write_summary(run_id, session)
+            return {
+                "ok": False,
+                "accounts": [],
                 "reason": "ai_error",
                 "error": str(exc),
                 "usage": response_usage(session, account_state, {"usage": exc.usage}),
