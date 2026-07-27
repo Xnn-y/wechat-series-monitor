@@ -21,11 +21,11 @@ def similar_series_key(text: str) -> str:
     return re.sub(r"[\u3000\s,，、。:：；;！？!?（）()\[\]【】《》\"'“”‘’._\-—–·|/\\]+", "", str(text or "")).lower()
 
 
-def edit_similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
+def edit_distance(a: str, b: str) -> int:
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         curr = [i]
@@ -33,8 +33,13 @@ def edit_similarity(a: str, b: str) -> float:
             cost = 0 if ca == cb else 1
             curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost))
         prev = curr
-    distance = prev[-1]
-    return 1.0 - distance / max(len(a), len(b))
+    return prev[-1]
+
+
+def edit_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return 1.0 - edit_distance(a, b) / max(len(a), len(b))
 
 
 def char_overlap_ratio(a: str, b: str) -> float:
@@ -98,9 +103,13 @@ def is_highly_similar_series_title(a: str, b: str) -> bool:
         return True
     min_len = min(len(ak), len(bk))
     max_len = max(len(ak), len(bk))
+    length_gap = max_len - min_len
+    # 同一标准账号下，4 字以上只相差一次增、删、改时按同一剧处理。
+    # 2-3 字短剧名不做模糊合并，避免“晚归/晚风”这类真实不同剧名被过滤。
+    if min_len >= 4 and length_gap <= 1 and edit_distance(ak, bk) <= 1:
+        return True
     if min_len < 8:
         return False
-    length_gap = max_len - min_len
     edit = edit_similarity(ak, bk)
     overlap = char_overlap_ratio(ak, bk)
     if length_gap <= 2 and edit >= 0.92 and overlap >= 0.96:

@@ -11,6 +11,7 @@ server/tests/test_api.py - 后端 MVP 功能测试
 import json
 import sys
 import os
+from unittest.mock import patch
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite:///server/data/collector.test.db"
@@ -260,6 +261,67 @@ def test_similar_series_dedup_same_account_only():
     print("  [PASS] 同账号高度相似剧名去重 -> inserted=2 duplicates=1")
 
 
+def test_single_character_series_dedup_and_notification():
+    """同账号单字误差不入库、不通知，真实不同或跨账号剧名仍保留"""
+    app = create_app()
+    client = app.test_client()
+
+    payload = {
+        "device": "test_phone_01",
+        "run_id": "20260727_test_single_character_titles",
+        "started_at": "2026-07-27 14:00:00",
+        "finished_at": "2026-07-27 14:05:00",
+        "records": [
+            {"account_name": "美好时光短剧场", "series_name": "九三重生之卡牌风云", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "九三重主之卡牌风云", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "我的稻虾田我说了算", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "我的稻虾田我说了算了", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "睿睿衣舍", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "睿睿别离", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "晚归", "episodes": ""},
+            {"account_name": "美好时光短剧场", "series_name": "晚风", "episodes": ""},
+            {"account_name": "快乐时光短剧场", "series_name": "九三重主之卡牌风云", "episodes": ""},
+        ],
+    }
+
+    with patch("src.routes.api.send_new_records_notification", return_value=True) as notify:
+        resp = client.post(
+            "/api/collect",
+            json=payload,
+            headers={"X-Collector-Token": "dev_token"},
+        )
+
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["received"] == 9
+    assert data["inserted"] == 7
+    assert data["duplicates"] == 2
+    assert data["notified"] is True
+
+    notified_records = notify.call_args.kwargs["inserted_records"]
+    notified_pairs = {(row["account"], row["series"]) for row in notified_records}
+    assert ("美好时光短剧场", "九三重主之卡牌风云") not in notified_pairs
+    assert ("美好时光短剧场", "我的稻虾田我说了算了") not in notified_pairs
+    assert ("美好时光短剧场", "九三重生之卡牌风云") in notified_pairs
+    assert ("美好时光短剧场", "我的稻虾田我说了算") in notified_pairs
+    assert ("美好时光短剧场", "睿睿衣舍") in notified_pairs
+    assert ("美好时光短剧场", "睿睿别离") in notified_pairs
+    assert ("美好时光短剧场", "晚归") in notified_pairs
+    assert ("美好时光短剧场", "晚风") in notified_pairs
+    assert ("快乐时光短剧场", "九三重主之卡牌风云") in notified_pairs
+
+    resp2 = client.get(
+        "/api/records?run_id=20260727_test_single_character_titles",
+        headers=ADMIN_HEADERS,
+    )
+    stored_pairs = {
+        (row["account_name_raw"], row["series_name_raw"])
+        for row in resp2.get_json()["records"]
+    }
+    assert stored_pairs == notified_pairs
+    print("  [PASS] 单字误差不入库通知，短剧名/真实不同剧名/跨账号剧名正常保留")
+
+
 def test_reject_non_standard_account_records():
     """9. 无法匹配标准账号库的记录禁止入库"""
     app = create_app()
@@ -434,10 +496,11 @@ if __name__ == "__main__":
     test_normalization_dedup()
     test_series_title_symbol_sanitize()
     test_similar_series_dedup_same_account_only()
+    test_single_character_series_dedup_and_notification()
     test_reject_non_standard_account_records()
     test_loose_standard_account_match_for_ocr_noise()
     test_get_records()
     test_get_runs()
     test_get_summary()
     test_export_csv()
-    print("\n===== 全部 14 项测试通过 ✅ =====")
+    print("\n===== 全部 15 项测试通过 ✅ =====")
