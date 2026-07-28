@@ -12,7 +12,7 @@ def send_new_records_notification(run_id: str, device: str, finished_at: str,
         return False
 
     inserted_count = len(inserted_records)
-    max_show = 10  # 最多展示前10条
+    max_show = 25  # 最多展示前25条
     record_lines = []
     for i, rec in enumerate(inserted_records[:max_show]):
         episodes = rec.get('episodes', '')
