@@ -73,6 +73,7 @@ def build_series_prompt() -> str:
         'The only allowed output shape is: {"cards":[{"t":"title1","e":47},{"t":"title2","e":60}]}',
         "Each item must contain t as the formal title and e as the visible episode count number.",
         "Do not include confidence, warnings, reasons, schema text, or any extra keys.",
+        "All titles must be output in Simplified Chinese. Convert any traditional Chinese characters to Simplified Chinese.",
         "Only detect usable series cards from the current screenshot.",
         "A card is usable only when the same card's cover image and episode count are both visible.",
         "The formal title is in the gray info area below the cover image and above the episode count.",
