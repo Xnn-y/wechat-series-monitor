@@ -27,6 +27,7 @@ def setup_function():
     settings.AI_MAX_SERIES_PER_ACCOUNT = 12
     settings.AI_MAX_CALLS_PER_RUN = 120
     recognition_session.SESSIONS.clear()
+    recognition_session.CLEANED_RUNS.clear()
 
 
 def test_recognize_series_and_summary():
@@ -53,6 +54,12 @@ def test_recognize_series_and_summary():
     assert data["new_titles"] == ["TitleA", "TitleB"]
     assert data["should_continue"] is True
     assert data["usage"]["screen_calls_for_run"] == 1
+    assert data["timing"]["json_parse_ms"] >= 0
+    assert data["timing"]["request_body_bytes"] > 0
+    assert data["timing"]["screenshot_save_ms"] >= 0
+    assert data["timing"]["ai_latency_ms"] >= 0
+    assert data["timing"]["server_total_ms"] >= 0
+    assert data["timing"]["server_route_ms"] >= data["timing"]["server_total_ms"]
 
     resp2 = client.get(
         f"/api/collector/series/recognize/summary?run_id={run_id}",
@@ -113,3 +120,54 @@ def test_recognize_series_keeps_leading_digits():
     data = resp.get_json()
     assert data["ok"] is True
     assert data["titles"] == ["1980的救赎"]
+
+
+def test_cleanup_failure_does_not_turn_success_into_http_500(monkeypatch):
+    app = create_app()
+    client = app.test_client()
+
+    def fail_cleanup():
+        raise FileNotFoundError("simulated concurrent cleanup")
+
+    monkeypatch.setattr(recognition_session, "cleanup_old_runs", fail_cleanup)
+    resp = client.post(
+        "/api/collector/series/recognize",
+        json={
+            "run_id": "test_cleanup_race",
+            "account": "account_a",
+            "screen_index": 0,
+            "image_base64": IMAGE_BASE64,
+            "image_format": "jpg",
+            "mock_titles": ["Title A"],
+        },
+        headers=HEADERS,
+    )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["titles"] == ["TitleA"]
+
+
+def test_runtime_cleanup_runs_once_per_run(monkeypatch):
+    app = create_app()
+    client = app.test_client()
+    cleanup_calls = []
+
+    monkeypatch.setattr(recognition_session, "cleanup_old_runs", lambda: cleanup_calls.append(1))
+    for screen_index in range(2):
+        resp = client.post(
+            "/api/collector/series/recognize",
+            json={
+                "run_id": "test_cleanup_once",
+                "account": "account_a",
+                "screen_index": screen_index,
+                "image_base64": IMAGE_BASE64,
+                "image_format": "jpg",
+                "mock_titles": [f"Title {screen_index}"],
+            },
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200
+
+    assert len(cleanup_calls) == 1

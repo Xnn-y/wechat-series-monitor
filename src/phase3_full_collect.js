@@ -859,15 +859,21 @@
             if (!serverUrl) throw new Error("backend serverUrl is not configured");
             if (!token) throw new Error("backend collectorToken is not configured");
 
+            var encodeStarted = Date.now();
+            var imageBase64 = imageToBase64(img);
+            var encodeMs = Date.now() - encodeStarted;
+            var imageBytes = estimateBase64Bytes(imageBase64);
             var payload = {
                 run_id: (ctx && ctx.runId) || "",
                 account: (ctx && ctx.account) || "unknown",
                 screen_index: Number((ctx && ctx.screenIndex) || 0),
-                image_base64: imageToBase64(img),
+                image_base64: imageBase64,
                 image_format: "jpg"
             };
             var url = serverUrl.replace(/\/+$/, "") + "/api/collector/series/recognize";
+            var httpStarted = Date.now();
             var responseText = postJson(url, token, payload, Number(cfg.timeout || 120000));
+            var httpMs = Date.now() - httpStarted;
             var result = JSON.parse(responseText);
             if (!result.ok) {
                 throw new Error("backend recognition failed: " + (result.error || result.reason || responseText));
@@ -879,8 +885,37 @@
                     + " reason=" + result.reason
                     + " calls=" + (usage.screen_calls_for_run || 0)
                     + " tokens=" + (usage.run_total_tokens || usage.total_tokens || 0));
+                logTiming(ctx, encodeMs, imageBytes, httpMs, result);
             }
             return result;
+        }
+
+        function estimateBase64Bytes(value) {
+            var text = String(value || "");
+            var comma = text.indexOf(",");
+            if (comma >= 0) text = text.substring(comma + 1);
+            var padding = 0;
+            if (/==$/.test(text)) padding = 2;
+            else if (/=$/.test(text)) padding = 1;
+            return Math.max(0, Math.floor(text.length * 3 / 4) - padding);
+        }
+
+        function logTiming(ctx, encodeMs, imageBytes, httpMs, result) {
+            var usage = (result && result.usage) || {};
+            var timing = (result && result.timing) || {};
+            var aiMs = Number(timing.ai_latency_ms || usage.latency_ms || 0);
+            var serverMs = Number(timing.server_route_ms || timing.server_total_ms || 0);
+            var beforeServerMs = serverMs > 0 ? Math.max(0, httpMs - serverMs) : 0;
+            log("[AI timing] account=" + ((ctx && ctx.account) || "unknown")
+                + " screen=" + Number((ctx && ctx.screenIndex) || 0)
+                + " encode=" + encodeMs + "ms"
+                + " image=" + Math.round(imageBytes / 1024) + "KB"
+                + " http=" + httpMs + "ms"
+                + " server=" + serverMs + "ms"
+                + " ai=" + aiMs + "ms"
+                + " before_server=" + beforeServerMs + "ms"
+                + " json_parse=" + Number(timing.json_parse_ms || 0) + "ms"
+                + " image_save=" + Number(timing.screenshot_save_ms || 0) + "ms");
         }
 
         function fetchSummary(runId) {

@@ -2,6 +2,7 @@
 import csv
 import io
 import os
+import time
 from functools import wraps
 from flask import Blueprint, request, jsonify, Response, send_from_directory
 from src.config.settings import settings
@@ -390,8 +391,15 @@ def health_check():
 @api.route("/api/collector/series/recognize", methods=["POST"])
 @require_token
 def recognize_series():
+    route_started = time.perf_counter()
+    parse_started = time.perf_counter()
     payload = request.get_json(silent=True) or {}
+    json_parse_ms = max(0, int((time.perf_counter() - parse_started) * 1000))
     result = recognize_screen(payload)
+    timing = result.setdefault("timing", {})
+    timing["json_parse_ms"] = json_parse_ms
+    timing["request_body_bytes"] = int(request.content_length or 0)
+    timing["server_route_ms"] = max(0, int((time.perf_counter() - route_started) * 1000))
     status = 200 if result.get("ok") else 400
     if result.get("reason") in {"ai_error", "missing_image"}:
         status = 200 if result.get("reason") == "ai_error" else 400

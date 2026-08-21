@@ -1,6 +1,7 @@
 """Run/account state and bounded logs for backend AI recognition."""
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,10 +16,14 @@ from src.services.ai_recognition import AiRecognitionError, recognize_series_ima
 
 ROOT = Path(__file__).resolve().parents[2] / "data" / "runtime" / "recognition_runs"
 LOCK = Lock()
+CLEANUP_LOCK = Lock()
 SESSIONS: Dict[str, Dict[str, Any]] = {}
+CLEANED_RUNS = set()
+LOGGER = logging.getLogger(__name__)
 
 
 def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
+    request_started = time.perf_counter()
     run_id = safe_name(payload.get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S"))
     account = str(payload.get("account") or "unknown").strip() or "unknown"
     screen_index = int(payload.get("screen_index") or 0)
@@ -42,7 +47,9 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
         account_state["screen_calls"] += 1
         session["usage"]["calls"] += 1
 
+    screenshot_started = time.perf_counter()
     screenshot_path = save_screenshot(run_id, account, screen_index, image_base64, image_format)
+    screenshot_save_ms = elapsed_ms(screenshot_started)
     try:
         ai_result = recognize_series_image(
             image_base64=image_base64,
@@ -50,6 +57,7 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
             mock_titles=payload.get("mock_titles"),
         )
         titles = ai_result["titles"]
+        state_started = time.perf_counter()
         with LOCK:
             session = get_session(run_id)
             account_state = get_account_state(session, account)
@@ -70,6 +78,12 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "reason": reason,
                 "usage": response_usage(session, account_state, ai_result),
             }
+            timing = {
+                "screenshot_save_ms": screenshot_save_ms,
+                "ai_latency_ms": int(ai_result.get("latency_ms") or 0),
+                "state_update_ms": elapsed_ms(state_started),
+            }
+            result["timing"] = timing
             append_log(run_id, {
                 "run_id": run_id,
                 "account": account,
@@ -78,13 +92,16 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "titles": titles,
                 "new_titles": new_titles,
                 "latency_ms": ai_result.get("latency_ms", 0),
+                "timing": timing,
                 "usage": ai_result.get("usage") or {},
             })
             write_summary(run_id, session)
         cleanup_screenshot_if_success(screenshot_path)
-        cleanup_old_runs()
+        safe_cleanup_old_runs(run_id)
+        result["timing"]["server_total_ms"] = elapsed_ms(request_started)
         return result
     except AiRecognitionError as exc:
+        state_started = time.perf_counter()
         with LOCK:
             session = get_session(run_id)
             account_state = get_account_state(session, account)
@@ -101,6 +118,12 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "ok": False,
                 "error": str(exc),
                 "fatal": exc.fatal,
+                "timing": {
+                    "screenshot_save_ms": screenshot_save_ms,
+                    "ai_latency_ms": 0,
+                    "state_update_ms": elapsed_ms(state_started),
+                    "server_total_ms": elapsed_ms(request_started),
+                },
             })
             write_summary(run_id, session)
             return {
@@ -112,7 +135,36 @@ def recognize_screen(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "reason": "ai_error",
                 "error": str(exc),
                 "usage": response_usage(session, account_state, {"usage": exc.usage}),
+                "timing": {
+                    "screenshot_save_ms": screenshot_save_ms,
+                    "ai_latency_ms": 0,
+                    "state_update_ms": elapsed_ms(state_started),
+                    "server_total_ms": elapsed_ms(request_started),
+                },
             }
+
+
+def elapsed_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def safe_cleanup_old_runs(run_id: str = ""):
+    run_id = safe_name(run_id) if run_id else ""
+    with CLEANUP_LOCK:
+        if run_id and run_id in CLEANED_RUNS:
+            return
+        if run_id:
+            CLEANED_RUNS.add(run_id)
+            if len(CLEANED_RUNS) > 200:
+                CLEANED_RUNS.clear()
+                CLEANED_RUNS.add(run_id)
+    try:
+        cleanup_old_runs()
+    except Exception:
+        if run_id:
+            with CLEANUP_LOCK:
+                CLEANED_RUNS.discard(run_id)
+        LOGGER.warning("recognition runtime cleanup failed", exc_info=True)
 
 
 def get_summary(run_id: str) -> Dict[str, Any]:
@@ -300,17 +352,25 @@ def cleanup_old_runs():
     keep = max(1, settings.AI_RECOGNITION_KEEP_SUMMARY_RUNS)
     cutoff = datetime.now() - timedelta(days=max(1, settings.AI_RECOGNITION_KEEP_FAILED_DAYS))
     for idx, directory in enumerate(dirs):
+        if not directory.exists():
+            continue
         summary = directory / "summary.json"
         failed_log = directory / "recognition_log.jsonl"
-        mtime = datetime.fromtimestamp(directory.stat().st_mtime)
+        try:
+            mtime = datetime.fromtimestamp(directory.stat().st_mtime)
+        except FileNotFoundError:
+            continue
         if idx >= keep and not failed_log.exists():
             shutil.rmtree(directory, ignore_errors=True)
         elif failed_log.exists() and mtime < cutoff:
             failed_log.unlink(missing_ok=True)
             for image in directory.glob("*_screen_*.*"):
                 image.unlink(missing_ok=True)
-        if not summary.exists() and not any(directory.iterdir()):
-            shutil.rmtree(directory, ignore_errors=True)
+        try:
+            if directory.exists() and not summary.exists() and not any(directory.iterdir()):
+                shutil.rmtree(directory, ignore_errors=True)
+        except FileNotFoundError:
+            continue
     trim_runtime_size()
 
 
