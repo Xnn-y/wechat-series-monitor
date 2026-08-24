@@ -2878,6 +2878,8 @@
     __phase3Factories["main.js"] = function (require, module, exports) {
         "auto";
 
+        if (!ensureSingleInstance()) exit();
+
         var config = require("./config.js");
         var screen = require("./screen.js");
         var ocr = require("./ocr.js");
@@ -2892,6 +2894,73 @@
 
         function makeRunId() {
             return time.beijingTime().replace(/[:\-\s]/g, "_").replace(/\.\d+/, "");
+        }
+
+        function ensureSingleInstance() {
+            try {
+                if (typeof engines === "undefined" || !engines.myEngine || !engines.all) {
+                    warn("当前环境不支持引擎枚举，跳过单实例检查");
+                    return true;
+                }
+
+                var current = engines.myEngine();
+                var currentId = engineId(current);
+                var currentSource = engineSource(current);
+                var currentNumericId = numericEngineId(currentId);
+                if (!currentSource || currentNumericId === null) {
+                    warn("无法读取当前脚本引擎标识，跳过单实例检查");
+                    return true;
+                }
+
+                var all = engines.all() || [];
+                for (var i = 0; i < all.length; i++) {
+                    var other = all[i];
+                    var otherId = engineId(other);
+                    if (!otherId || otherId === currentId) continue;
+                    if (engineSource(other) !== currentSource) continue;
+                    var otherNumericId = numericEngineId(otherId);
+                    if (otherNumericId === null) continue;
+
+                    // Timed tasks normally receive increasing engine IDs. The older
+                    // engine keeps ownership; a newly triggered duplicate exits.
+                    if (otherNumericId >= currentNumericId) continue;
+                    log("检测到上一轮同脚本仍在运行，跳过本次定时触发：engine=" + otherId);
+                    return false;
+                }
+            } catch (e) {
+                warn("单实例检查失败，继续运行当前任务：" + e);
+            }
+            return true;
+        }
+
+        function engineId(engine) {
+            try {
+                if (engine && typeof engine.getId === "function") return String(engine.getId());
+            } catch (e) {}
+            try {
+                if (engine && engine.id !== undefined && engine.id !== null) return String(engine.id);
+            } catch (e2) {}
+            return "";
+        }
+
+        function numericEngineId(value) {
+            var parsed = Number(value);
+            return isNaN(parsed) ? null : parsed;
+        }
+
+        function engineSource(engine) {
+            try {
+                var source = engine && typeof engine.getSource === "function"
+                    ? engine.getSource()
+                    : (engine && engine.source);
+                return String(source || "")
+                    .replace(/\\/g, "/")
+                    .replace(/[?#].*$/, "")
+                    .trim()
+                    .toLowerCase();
+            } catch (e) {
+                return "";
+            }
         }
 
         function collectSeries(initialPage, ctx) {
