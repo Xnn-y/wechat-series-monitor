@@ -123,7 +123,7 @@ function normalizeAccountRow(row) {
 }
 
 function cleanAccountLabel(label) {
-    label = text.applyKnownOcrCorrections(text.clean(label))
+    label = text.toSimplified(text.applyKnownOcrCorrections(text.clean(label)))
         .replace(/^[^\u4e00-\u9fffA-Za-z0-9]+/, "")
         .replace(/[<《?？]+$/g, "")
         .replace(/[.。]+$/g, "")

@@ -51,7 +51,7 @@ def char_overlap_ratio(a: str, b: str) -> float:
 
 
 def account_match_key(text: str, keep_ascii: bool = True) -> str:
-    value = str(text or "").strip().lower()
+    value = str(text or "").strip().lower().replace("銀", "银")
     value = re.sub(r"[\u3000\s]+", "", value)
     # 头像/图标里的英文字母常被拼进账号名前缀，例如 QD驱督教育。
     value = re.sub(r"^[a-z]+(?=[\u3400-\u9fff])", "", value)

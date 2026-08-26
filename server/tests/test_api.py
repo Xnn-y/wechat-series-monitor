@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.app import create_app
 from src.db import init_db, get_connection, DB_PATH
-from src.services.collector import sanitize_series_title
+from src.services.collector import account_match_key, sanitize_series_title
 import os as _os
 
 ADMIN_HEADERS = {"X-Admin-Password": "admin123"}
@@ -49,6 +49,7 @@ def test_health():
 
 def test_series_title_traditional_silver_normalization():
     assert sanitize_series_title("銀河纪元") == "银河纪元"
+    assert account_match_key("銀河纪元") == account_match_key("银河纪元")
     print("  [PASS] OCR繁体字纠正 -> 銀河纪元转换为银河纪元")
 
 
