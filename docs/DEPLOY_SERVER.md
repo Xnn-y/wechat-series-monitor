@@ -5,7 +5,7 @@
 当前部署条件：
 
 - 服务器系统：Ubuntu
-- 访问方式：域名 `http://atool.fz-ue.com` 访问微信剧集监控
+- 访问方式：域名 `https://atool.fz-ue.com` 访问微信剧集监控
 - 示例服务器 IP：`8.163.72.189`
 - 仓库状态：GitHub 私有仓库
 - 当前服务器已有项目：
@@ -16,7 +16,7 @@
 当前端口关系：
 
 ```text
-http://atool.fz-ue.com/        -> Nginx 80 -> 127.0.0.1:5001 微信剧集监控
+https://atool.fz-ue.com/       -> Nginx 443 -> 127.0.0.1:5001 微信剧集监控
 http://8.163.72.189:8081/      -> 图鸭 admin_web
 http://8.163.72.189:8082/      -> 图鸭 custom_web
 ```
@@ -82,7 +82,7 @@ nano server/.env
 ```env
 APP_ENV=production
 DATABASE_URL=sqlite:////opt/wechat-series-monitor/server/data/collector.prod.db
-PUBLIC_BASE_URL=http://atool.fz-ue.com
+PUBLIC_BASE_URL=https://atool.fz-ue.com
 DEVICE_OFFLINE_MINUTES=150
 
 COLLECTOR_TOKEN=换成一串强随机token
@@ -98,7 +98,7 @@ WECOM_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的企
 ```bash
 cd /opt/wechat-series-monitor
 source .venv/bin/activate
-gunicorn -w 2 -b 127.0.0.1:5001 "server.src.app:create_app()"
+gunicorn -w 1 --threads 4 -b 127.0.0.1:5001 "server.src.app:create_app()"
 ```
 
 然后另开一个终端测试：
@@ -129,7 +129,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/wechat-series-monitor
 Environment=PYTHONPATH=/opt/wechat-series-monitor/server
-ExecStart=/opt/wechat-series-monitor/.venv/bin/gunicorn -w 2 -b 127.0.0.1:5001 "src.app:create_app()"
+ExecStart=/opt/wechat-series-monitor/.venv/bin/gunicorn -w 1 --threads 4 -b 127.0.0.1:5001 "src.app:create_app()"
 Restart=always
 RestartSec=5
 
@@ -195,13 +195,13 @@ sudo systemctl reload nginx
 访问：
 
 ```text
-http://atool.fz-ue.com/dashboard
+https://atool.fz-ue.com/dashboard
 ```
 
 兼容旧登录路径：
 
 ```text
-http://atool.fz-ue.com/login
+https://atool.fz-ue.com/login
 ```
 
 ## 9. HTTPS
@@ -226,7 +226,7 @@ https://atool.fz-ue.com/dashboard
 ```js
 backend: {
     enabled: true,
-    serverUrl: "http://atool.fz-ue.com",
+    serverUrl: "https://atool.fz-ue.com",
     collectorToken: "和服务器 COLLECTOR_TOKEN 一样"
 }
 ```
@@ -311,8 +311,8 @@ git push
 
 部署后逐项验证：
 
-1. `http://atool.fz-ue.com/health` 返回 `ok: true`
-2. `http://atool.fz-ue.com/dashboard` 可以打开登录页
+1. `https://atool.fz-ue.com/health` 返回 `ok: true`
+2. `https://atool.fz-ue.com/dashboard` 可以打开登录页
 3. 输入 `ADMIN_PASSWORD` 可以登录
 4. 企业微信通知里后台链接可以打开
 5. 手机 Auto.js 上报后，后台“最近采集”出现新轮次

@@ -1,11 +1,24 @@
-# 微信视频号剧集采集系统
+# 微信视频号剧集监控与采集系统
 
 这个项目用于监控微信视频号关注账号的剧集更新。
+
+## 当前状态
+
+| 模块 | 状态 |
+|---|---|
+| AutoJs6 手机采集 | 已部署并持续使用 |
+| 后端 API 与 SQLite 去重 | 已部署并持续使用 |
+| 企业微信通知 | 已接入 |
+| 团队 Dashboard 与 CSV 导出 | 已交付内部使用 |
+| 剧名识别 | 当前默认使用后端 AI，保留本地 OCR 逻辑作为维护基础 |
+
+项目仍在边运行边验证。采集规则、视频号页面结构或 AI 服务变化后，应先用真实样本验证，再调整识别或页面操作逻辑。
 
 当前架构是：
 
 ```text
 AutoJs6 手机采集端
+  -> 截图与后端 AI 剧名识别
   -> 本地 CSV 备份
   -> 后端 API 上报
   -> SQLite 去重入库
@@ -31,7 +44,8 @@ tools/
   build_phase3_full_collect.js
 
 docs/
-  PROJECT_CLEANUP_AND_BACKEND_PLAN.md
+  README.md                  文档导航
+  HANDOFF.md                 维护与接手说明
 ```
 
 旧路线、探测脚本、历史快照已经放在本地归档目录中，不再作为当前主线维护。
@@ -39,9 +53,9 @@ docs/
 ## 当前线上入口
 
 ```text
-微信剧集监控后台：http://atool.fz-ue.com/dashboard
-健康检查：http://atool.fz-ue.com/health
-手机端上报：http://atool.fz-ue.com/api/collect
+微信剧集监控后台：https://atool.fz-ue.com/dashboard
+健康检查：https://atool.fz-ue.com/health
+手机端上报：https://atool.fz-ue.com/api/collect
 ```
 
 当前服务器上，`atool.fz-ue.com` 的 80 端口用于微信剧集监控；图鸭项目保留裸 IP + 独立端口访问，不再占用这个域名。
@@ -114,6 +128,8 @@ $env:PYTHONIOENCODING='utf-8'
 python server\tests\test_api.py
 python server\tests\test_dashboard.py
 python server\tests\test_e2e.py
+python server\tests\test_notifier.py
+python server\tests\test_recognition_api.py
 node --check src\phase3_full_collect.js
 ```
 
@@ -130,7 +146,7 @@ server/data/collector.test.db
 ```text
 APP_ENV=production
 DATABASE_URL=sqlite:////opt/wechat-series-monitor/server/data/collector.prod.db
-PUBLIC_BASE_URL=http://atool.fz-ue.com
+PUBLIC_BASE_URL=https://atool.fz-ue.com
 DEVICE_OFFLINE_MINUTES=150
 COLLECTOR_TOKEN=change_me
 ADMIN_PASSWORD=change_me
@@ -143,12 +159,23 @@ AutoJs6 端需要把 `src/phase3/config.js` 里的后端地址改成服务器地
 ```javascript
 backend: {
     enabled: true,
-    serverUrl: "http://atool.fz-ue.com",
+    serverUrl: "https://atool.fz-ue.com",
     collectorToken: "same_token_as_server"
 }
 ```
 
 `WECOM_WEBHOOK_URL` 是企业微信群机器人通知地址。采集入库出现新增剧集时，后端会通过它发送通知；它不是手机端启动脚本的触发 webhook。
+
+生产环境的 Token、登录密码、Webhook 和 AI 服务密钥只能放在服务器环境变量或设备本地配置中，不得写入仓库、日志、截图或交接文档。
+
+## 文档
+
+- [文档导航](./docs/README.md)
+- [维护与接手说明](./docs/HANDOFF.md)
+- [手机端配置](./docs/PHONE_SETUP.md)
+- [服务器部署](./docs/DEPLOY_SERVER.md)
+- [AI 识别迁移与验证](./docs/AI_RECOGNITION_MIGRATION_PLAN.md)
+- [AI 耗时诊断](./docs/AI_RECOGNITION_TIMING_DIAGNOSTICS.md)
 
 ## Git 约定
 
