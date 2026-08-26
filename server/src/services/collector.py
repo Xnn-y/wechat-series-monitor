@@ -172,7 +172,7 @@ def sanitize_series_title(text: str) -> str:
     if not text:
         return ""
 
-    text = str(text).strip().replace("，", ",").replace("：", ":")
+    text = str(text).strip().replace("，", ",").replace("：", ":").replace("銀", "银")
     chars = []
     for ch in text:
         code = ord(ch)
