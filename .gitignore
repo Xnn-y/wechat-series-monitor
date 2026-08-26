@@ -35,6 +35,11 @@ archive/
 .graphify_*.json
 graphify-out/
 
+# Local evaluation data and build caches
+# experiments/ may contain real page screenshots and provider outputs.
+experiments/
+gocache-mediaforge/
+
 # OS / editor noise
 .DS_Store
 Thumbs.db
