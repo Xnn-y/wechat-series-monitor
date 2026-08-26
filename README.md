@@ -29,9 +29,10 @@ AutoJs6 手机采集端
 ## 当前主线
 
 ```text
-src/
-  phase3/                    AutoJs6 模块化源码
-  phase3_full_collect.js     AutoJs6 直接运行的合成单文件脚本
+mobile/
+  src/                       AutoJs6 模块化源码
+  dist/wechat-series-monitor.js
+                             AutoJs6 直接运行的生成入口
 
 server/
   src/                       Flask 后端源码
@@ -41,7 +42,7 @@ server/
   .env.example               环境变量示例
 
 tools/
-  build_phase3_full_collect.js
+  build_mobile_bundle.js
 
 docs/
   README.md                  文档导航
@@ -62,16 +63,16 @@ docs/
 
 ## 手机端运行
 
-修改 `src/phase3/` 后，先重新生成 AutoJs6 单文件：
+修改 `mobile/src/` 后，先重新生成 AutoJs6 单文件：
 
 ```powershell
-node tools\build_phase3_full_collect.js
+node tools\build_mobile_bundle.js
 ```
 
 然后把下面这个文件放到 AutoJs6 运行：
 
 ```text
-src/phase3_full_collect.js
+mobile/dist/wechat-series-monitor.js
 ```
 
 手机端本地备份路径：
@@ -130,7 +131,7 @@ python server\tests\test_dashboard.py
 python server\tests\test_e2e.py
 python server\tests\test_notifier.py
 python server\tests\test_recognition_api.py
-node --check src\phase3_full_collect.js
+node --check mobile\dist\wechat-series-monitor.js
 ```
 
 测试使用独立数据库：
@@ -154,7 +155,7 @@ VIEWER_PASSWORD=change_me
 WECOM_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...
 ```
 
-AutoJs6 端需要把 `src/phase3/config.js` 里的后端地址改成服务器地址：
+AutoJs6 端需要把 `mobile/src/config.js` 里的后端地址改成服务器地址：
 
 ```javascript
 backend: {
@@ -182,8 +183,8 @@ backend: {
 纳入 Git 的内容：
 
 ```text
-src/phase3/
-src/phase3_full_collect.js
+mobile/src/
+mobile/dist/wechat-series-monitor.js
 server/src/
 server/tests/
 server/requirements.txt

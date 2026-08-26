@@ -35,9 +35,9 @@ screen.ensureCapture()
 明确保留：
 
 ```text
-src/phase3/main.js              遍历状态机先尽量保留
-src/phase3/screen.js            截图、滑动、返回
-src/phase3/reporter.js          标准账号同步、上报、心跳
+mobile/src/main.js              遍历状态机先尽量保留
+mobile/src/screen.js            截图、滑动、返回
+mobile/src/reporter.js          标准账号同步、上报、心跳
 server/src/routes/api.py        API 和 Dashboard 路由
 server/src/services/collector.py 入库、去重，后续增强通知保护
 server/src/services/notifier.py 企业微信通知
@@ -46,11 +46,11 @@ server/src/services/notifier.py 企业微信通知
 逐步替换或抽象：
 
 ```text
-src/phase3/ocr.js               从主识别入口退为回滚/对照
-src/phase3/account_parser.js    保留账号清洗和标准账号校验，减少 OCR items 行解析
-src/phase3/actions.js           Tab 定位改吃 AI 返回坐标
-src/phase3/series_parser.js     剧集标题解析改吃 AI 返回卡片
-src/phase3/text_utils.js        保留归一化、相似度、标准账号匹配
+mobile/src/ocr.js               从主识别入口退为回滚/对照
+mobile/src/account_parser.js    保留账号清洗和标准账号校验，减少 OCR items 行解析
+mobile/src/actions.js           Tab 定位改吃 AI 返回坐标
+mobile/src/series_parser.js     剧集标题解析改吃 AI 返回卡片
+mobile/src/text_utils.js        保留归一化、相似度、标准账号匹配
 ```
 
 ## 3. OCR 经验迁移规则
@@ -93,10 +93,10 @@ src/phase3/text_utils.js        保留归一化、相似度、标准账号匹配
 建议新增统一识别入口：
 
 ```text
-src/phase3/recognizer.js
-src/phase3/ai_recognizer.js
-src/phase3/ocr_recognizer.js
-src/phase3/recognition_rules.js
+mobile/src/recognizer.js
+mobile/src/ai_recognizer.js
+mobile/src/ocr_recognizer.js
+mobile/src/recognition_rules.js
 ```
 
 主流程只依赖：
@@ -242,9 +242,9 @@ AI 不频繁脑补不存在的剧名。
 新增识别抽象：
 
 ```text
-src/phase3/recognizer.js
-src/phase3/ai_recognizer.js
-src/phase3/ocr_recognizer.js
+mobile/src/recognizer.js
+mobile/src/ai_recognizer.js
+mobile/src/ocr_recognizer.js
 ```
 
 配置新增：
@@ -267,8 +267,8 @@ recognition: {
 验证：
 
 ```text
-node tools\build_phase3_full_collect.js
-node --check src\phase3_full_collect.js
+node tools\build_mobile_bundle.js
+node --check mobile\dist\wechat-series-monitor.js
 ```
 
 ### 阶段 3：剧集页 AI shadow mode
@@ -319,8 +319,8 @@ confidence >= minConfidence
 验证：
 
 ```text
-node tools\build_phase3_full_collect.js
-node --check src\phase3_full_collect.js
+node tools\build_mobile_bundle.js
+node --check mobile\dist\wechat-series-monitor.js
 小范围手机实测 1-3 个账号，不全量跑。
 ```
 
@@ -453,8 +453,8 @@ AI 剧集页、Tab、关注列表都已通过实测。
 每个阶段至少执行：
 
 ```powershell
-node tools\build_phase3_full_collect.js
-node --check src\phase3_full_collect.js
+node tools\build_mobile_bundle.js
+node --check mobile\dist\wechat-series-monitor.js
 ```
 
 涉及后端时执行：
@@ -491,7 +491,7 @@ AI 调用次数和成本是否可控
 
 ## 7. 不建议立即做的事
 
-- 不要直接大改 `src/phase3/main.js` 主状态机。
+- 不要直接大改 `mobile/src/main.js` 主状态机。
 - 不要立即删除 `ocr.js`。
 - 不要让 AI 结果绕过标准账号库。
 - 不要让 AI 结果直接绕过后端去重和通知逻辑。

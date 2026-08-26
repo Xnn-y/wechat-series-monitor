@@ -1,6 +1,6 @@
 {
     "name": "剧集采集",
-    "main": "src/phase3_full_collect.js",
+    "main": "mobile/dist/wechat-series-monitor.js",
     "ignore": [
         "server",
         "archive",

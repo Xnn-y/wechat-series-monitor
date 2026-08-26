@@ -20,18 +20,18 @@ AutoJs6 手机采集
 
 ## 当前维护基线
 
-- `src/phase3/config.js` 的默认识别模式为 `backend_ai`。
-- `src/phase3/` 是可维护源码，`src/phase3_full_collect.js` 是构建后的 AutoJs6 单文件入口。
+- `mobile/src/config.js` 的默认识别模式为 `backend_ai`。
+- `mobile/src/` 是可维护源码，`mobile/dist/wechat-series-monitor.js` 是构建后的 AutoJs6 单文件入口。
 - 手机端启动前有单实例保护，避免定时任务重叠运行。
 - 线上 API 使用 HTTPS；本地开发仍可使用 `127.0.0.1` HTTP。
 - 本地 OCR、标签页判断和既有采集流程仍是重要的回退与诊断基础，不应在没有对照验证时删除。
 
 ## 关键目录
 
-- `src/phase3/`：手机采集、页面识别、AI 调用和运行控制。
+- `mobile/src/`：手机采集、页面识别、AI 调用和运行控制。
 - `server/src/`：Flask API、鉴权、数据库、通知和 Dashboard。
 - `server/tests/`：后端与识别接口回归测试。
-- `tools/build_phase3_full_collect.js`：生成手机端单文件。
+- `tools/build_mobile_bundle.js`：生成手机端单文件。
 - `docs/`：部署、配置、识别实验和历史说明。
 
 ## 修改与验证
@@ -39,7 +39,7 @@ AutoJs6 手机采集
 修改手机端模块后先重新构建：
 
 ```powershell
-node tools\build_phase3_full_collect.js
+node tools\build_mobile_bundle.js
 ```
 
 提交前至少运行：
@@ -51,7 +51,7 @@ python server\tests\test_dashboard.py
 python server\tests\test_e2e.py
 python server\tests\test_notifier.py
 python server\tests\test_recognition_api.py
-node --check src\phase3_full_collect.js
+node --check mobile\dist\wechat-series-monitor.js
 ```
 
 自动测试通过不等于手机端真实验收通过。涉及识别、滑动、标签页或截图范围的修改，应在设备上验证一次完整采集，并确认本地 CSV、后端记录和通知结果一致。

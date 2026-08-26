@@ -476,7 +476,7 @@ GET  /api/collector/series/recognize/summary
 新增：
 
 ```text
-src/phase3/backend_recognizer.js
+mobile/src/backend_recognizer.js
 ```
 
 让剧集页识别改为：
