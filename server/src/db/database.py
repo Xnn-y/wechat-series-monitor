@@ -66,6 +66,10 @@ DEFAULT_STANDARD_ACCOUNTS = [
     "新想象AI短剧",
 ]
 
+DEFAULT_OCR_ALIASES = [
+    ("森森喵", "淼淼喵", "account"),
+]
+
 
 def normalize_standard_account_name(name: str) -> str:
     """Normalize a standard account name for duplicate checks."""
@@ -161,6 +165,13 @@ def init_db():
             UNIQUE(raw_text, field_type)
         )
     """)
+    for raw_text, correct_text, field_type in DEFAULT_OCR_ALIASES:
+        cursor.execute(
+            """INSERT OR IGNORE INTO ocr_aliases
+               (raw_text, correct_text, field_type, created_by)
+               VALUES (?, ?, ?, 'seed')""",
+            (raw_text, correct_text, field_type),
+        )
 
     # ---- 心跳日志表 ----
     cursor.execute("""

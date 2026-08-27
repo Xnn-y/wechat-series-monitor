@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.app import create_app
 from src.db import init_db, get_connection, DB_PATH
-from src.services.collector import account_match_key, sanitize_series_title
+from src.services.collector import account_match_key, apply_ocr_aliases, sanitize_series_title
 import os as _os
 
 ADMIN_HEADERS = {"X-Admin-Password": "admin123"}
@@ -51,6 +51,11 @@ def test_series_title_traditional_silver_normalization():
     assert sanitize_series_title("銀河纪元") == "银河纪元"
     assert account_match_key("銀河纪元") == account_match_key("银河纪元")
     print("  [PASS] OCR繁体字纠正 -> 銀河纪元转换为银河纪元")
+
+
+def test_default_account_ocr_alias():
+    assert apply_ocr_aliases("森森喵", "account") == "淼淼喵"
+    print("  [PASS] 默认账号OCR别名 -> 森森喵修正为淼淼喵")
 
 
 def test_collect_no_token():
@@ -496,6 +501,7 @@ def test_export_csv():
 if __name__ == "__main__":
     setup_module()
     test_health()
+    test_default_account_ocr_alias()
     test_collect_no_token()
     test_standard_accounts()
     test_collect_with_token()
